@@ -1,0 +1,26 @@
+{
+  "folders": [
+	{
+		"path": ".."
+	},
+	{
+		"path": "../../Appeal daily"
+	},
+	{
+		"path": "../../Data clean"
+	},
+	{
+		"path": "../../People Statistic"
+	},
+	{
+		"path": "../../Gov and OEC"
+	},
+	{
+		"name": "Code_Tik_Tok",
+		"path": "D:/Git Res/Code_Tik_Tok"
+	}
+],
+  "settings": {
+    "git.ignoreLimitWarning": true
+  }
+}
