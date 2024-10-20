@@ -1,0 +1,270 @@
+let
+    Source = Excel.CurrentWorkbook(){[Name="Activity_Rawdata"]}[Content],
+    #"Changed Type" = Table.TransformColumnTypes(Source,{{"Agent Email", type text}, {"Supervisor Email", type text}, {"Agent State", type text}, {"Start Time", type datetime}, {"End Time", type datetime}, {"Total Time in seconds", type number}, {"Queue Name", type any}, {"Conversation Handled", type text}, {"Ring Time in seconds", type any}, {"Talk Time in seconds", type any}, {"Hold Time in seconds", type any}, {"Wrap-up Time in seconds", type any}, {"Transfer Type", type any}, {"Transfer Reason", type any}, {"Agent Business Location", type any}}),
+    #"Removed Other Columns4" = Table.SelectColumns(#"Changed Type",{"Agent Email", "Agent State", "Start Time", "End Time", "Agent Business Location"}),
+    RemoveNullRows = Table.SelectRows(
+        #"Removed Other Columns4",
+        each [End Time] <> null and [End Time] <> ""
+    ),
+    #"Filtered Rows" = Table.SelectRows(RemoveNullRows, each ([Agent State] <> "End of Shift-IDLE" and [Agent State] <> "Log out-IDLE")),
+ 
+    #"Converted to DateTime" = Table.TransformColumnTypes(#"Filtered Rows",{{"Start Time", type datetime}, {"End Time", type datetime}}),
+ 
+    #"Added Custom" = Table.AddColumn(#"Converted to DateTime", "Day_Start_Time", each Date.From([Start Time]), type date),
+    #"Added Custom1" = Table.AddColumn(#"Added Custom", "Time_Start_Time", each Time.From([Start Time]), type time),
+ 
+    #"Added Custom2" = Table.AddColumn(#"Added Custom1", "Day_End_Time", each Date.From([End Time]), type date),
+    #"Added Custom3" = Table.AddColumn(#"Added Custom2", "Time_End_Time", each Time.From([End Time]), type time),
+ 
+    AddStartTimeHour = Table.AddColumn(
+        #"Added Custom3", 
+        "Start_Time_Hours", 
+        each (Time.Hour([Time_Start_Time]) + Time.Minute([Time_Start_Time]) / 60 + Time.Second([Time_Start_Time])/ 3600) , 
+        type number),
+ 
+    AddEndTimeHour = Table.AddColumn(
+        AddStartTimeHour, 
+        "End_Time_Hours", 
+        each 
+            let
+                endHours = Time.Hour([Time_End_Time]) + Time.Minute([Time_End_Time]) / 60 + Time.Second([Time_End_Time]) / 3600,
+                adjustedEndHours = if [Day_End_Time] > [Day_Start_Time] then endHours + 24 else endHours
+            in
+                adjustedEndHours, 
+        type number),
+    AddStartTimeHalfRounding = Table.AddColumn(
+        AddEndTimeHour, 
+        "Start_Time_Half_Rounding", 
+        each 
+            if Number.RoundUp([Start_Time_Hours] * 2) / 2 = [Start_Time_Hours]
+            then [Start_Time_Hours]
+            else Number.RoundDown([Start_Time_Hours] * 2) / 2,
+        type number
+    ),
+    AddEndTimeHalfRounding = Table.AddColumn(
+        AddStartTimeHalfRounding, 
+        "End_Time_Half_Rounding", 
+        each 
+            if Number.RoundDown([End_Time_Hours] * 2) / 2 = [End_Time_Hours]
+            then [End_Time_Hours]
+            else Number.RoundUp([End_Time_Hours] * 2) / 2,
+        type number
+    ),
+    AddNumberSplit = Table.AddColumn(
+        AddEndTimeHalfRounding, 
+        "Number_Split", 
+        each 
+            if 
+                [End_Time_Half_Rounding] <> null and [Start_Time_Half_Rounding] <> null
+            then 
+                ([End_Time_Half_Rounding] - [Start_Time_Half_Rounding]) * 2
+            else 
+                null,
+        type number
+    ),
+    #"Renamed Columns" = Table.RenameColumns(AddNumberSplit,{{"Start_Time_Half_Rounding", "Time_1"}}),
+    #"Added Custom4" = Table.AddColumn(
+        #"Renamed Columns",
+            "Time_2",
+            each [Time_1] + 0.5,
+            type number
+    ),
+    #"Reordered Columns" = Table.ReorderColumns(#"Added Custom4",{"Agent Email", "Agent State", "Start Time", "End Time", "Day_Start_Time", "Time_Start_Time", "Day_End_Time", "Time_End_Time", "Start_Time_Hours", "End_Time_Hours", "Time_1", "Time_2", "Number_Split"}),
+    #"Duplicated Rows" = Table.DuplicateColumn(#"Reordered Columns", "Number_Split", "Duplicated"),
+    #"Added Custom5" = Table.AddColumn(#"Duplicated Rows", "Custom", each List.Numbers(0, [Number_Split])),
+    #"Expanded Custom" = Table.ExpandListColumn(#"Added Custom5", "Custom"),
+    #"Added Custom6" = Table.AddColumn(#"Expanded Custom", "Time_1_New", each [Time_1] + ([Custom] * 0.5), type number),
+    #"Added Custom7" = Table.AddColumn(#"Added Custom6", "Time_2_New", each [Time_2] + ([Custom] * 0.5), type number),
+    #"Rounded End_Time_Hours" = Table.AddColumn(#"Added Custom7", "Rounded_End_Time_Hours", each Number.RoundUp([End_Time_Hours] * 2) / 2),
+    #"Filtered_Rows" = Table.SelectRows(#"Rounded End_Time_Hours", each [Rounded_End_Time_Hours] > [Time_1_New]),
+    #"Added Start_Time_Number" = Table.AddColumn(
+        Filtered_Rows,
+        "Start_Time_Number",
+        each if [Time_1_New] > [Start_Time_Hours] then [Time_1_New] else [Start_Time_Hours]
+    ),
+    #"Added End_Time_Number" = Table.AddColumn(
+        #"Added Start_Time_Number",
+        "End_Time_Number",
+        each if [Time_2_New] < [End_Time_Hours] then [Time_2_New] else [End_Time_Hours]
+    ),
+    #"Added Day_Start_Time" = Table.AddColumn(
+        #"Added End_Time_Number",
+        "New_Day_Start_Time",
+        each let
+            calculatedValue = [Start_Time_Number]
+        in
+            if [Day_Start_Time] = [Day_End_Time] then [Day_Start_Time] else
+                if calculatedValue >= 24 then Date.AddDays([Day_Start_Time], 1) else [Day_Start_Time], type date
+    ),
+    #"Added Day_End_Time" = Table.AddColumn(
+        #"Added Day_Start_Time",
+        "New_Day_End_Time",
+        each let
+            calculatedValue = [End_Time_Number]
+        in
+            if [Day_Start_Time] = [Day_End_Time] then [Day_End_Time] else
+                if calculatedValue < 24 then Date.AddDays([Day_End_Time], -1) else [Day_End_Time], type date
+    ),
+    #"Adjusted Columns" = Table.TransformColumns(
+        #"Added Day_End_Time",
+        {
+            {"Start_Time_Number", each Number.Mod(if _ > 24 then _ - 24 else _, 24), Int64.Type},
+            {"End_Time_Number", each Number.Mod(if _ >= 24 then _ - 24 else _, 24), Int64.Type}
+        }
+    ),
+    #"Converted to Time" = Table.TransformColumns(
+        #"Adjusted Columns",
+        {
+            {"Start_Time_Number", each 
+                let
+                    hours = Number.RoundDown(_),
+                    remainingMinutes = (_ - hours) * 60,
+                    minutes = Number.RoundDown(remainingMinutes),
+                    secondsRaw = (_ - hours - minutes / 60) * 3600,
+                    seconds = Number.RoundDown(secondsRaw),
+                    timeText = Text.From(hours) & ":" & Text.From(minutes) & ":" & Text.From(seconds)
+                in
+                    Time.FromText(timeText), 
+                type time
+            },
+ 
+            {"End_Time_Number", each 
+                let
+                    hours = Number.RoundDown(_),
+                    minutes = Number.RoundDown((_ - hours) * 60),
+                    secondsRaw = (_ - hours - minutes / 60) * 3600,
+                    seconds = Number.RoundDown(secondsRaw),
+                    timeText = Text.From(hours) & ":" & Text.From(minutes) & ":" & Text.From(seconds)
+                in
+                    Time.FromText(timeText), 
+                type time
+            }
+        }
+    ),
+    #"Extended Start Times" = Table.AddColumn(
+    #"Converted to Time", 
+        "Extend_Start_Time", 
+        each DateTime.FromText(Text.From([Start_Time_Number]) & " " & Text.From([New_Day_Start_Time]))
+            + #duration(0, 0, 0, Time.Second([Start_Time_Number])),
+        type datetime
+    ),
+    #"Extended End Times" = Table.AddColumn(
+        #"Extended Start Times", 
+        "Extend_End_Time", 
+        each DateTime.FromText(Text.From([End_Time_Number]) & " " & Text.From([New_Day_End_Time]))
+            + #duration(0, 0, 0, Time.Second([End_Time_Number])), 
+        type datetime),
+    #"Added Duration Column" = Table.AddColumn(
+        #"Extended End Times", 
+        "Duration", 
+        each Duration.TotalSeconds([Extend_End_Time] - [Extend_Start_Time]),
+        type number
+    ),
+ 
+    #"Removed Other Columns2" = Table.SelectColumns(#"Added Duration Column",{"Agent Email", "Agent State", "Start Time", "End Time", "Day_Start_Time", "Time_1_New", "Extend_Start_Time", "Extend_End_Time", "Duration"}),
+    #"Reordered Columns1" = Table.ReorderColumns(#"Removed Other Columns2",{"Day_Start_Time", "Time_1_New", "Agent Email", "Agent State", "Start Time", "End Time", "Extend_Start_Time", "Extend_End_Time", "Duration"}),
+    #"Renamed Columns2" = Table.RenameColumns(#"Reordered Columns1",{{"Time_1_New", "Intervals"}}),
+    #"Adjusted_Slot_Columns" = Table.TransformColumns(
+        #"Renamed Columns2",
+        {
+            {"Intervals", each Number.Mod(if _ > 24 then _ - 24 else _, 24), Int64.Type}
+        }
+    ),
+    Changed_Slot = Table.TransformColumnTypes(Adjusted_Slot_Columns,{{"Intervals", type text}}),
+    Converted_Slot_to_Time = Table.TransformColumns(
+        Changed_Slot,
+        {
+            {"Intervals", each Time.From(DateTime.From(Number.RoundDown(Number.FromText(_) * 3600, 0) / 86400))}
+        }
+    ),
+    #"Formatted Time" = Table.TransformColumns(
+       Converted_Slot_to_Time,
+        {
+            {"Intervals", each Time.ToText(_, "h:mm tt")}
+        }
+    ),
+    #"Changed Type1" = Table.TransformColumnTypes(#"Formatted Time",{{"Intervals", type time}}),
+    #"Renamed Columns1" = Table.RenameColumns(#"Changed Type1",{{"Day_Start_Time", "Date"}}),
+    Merged_HC = Table.NestedJoin(#"Renamed Columns1", {"Date","Agent Email"},HC_Extend, {"Date","Email Id"},"HC",JoinKind.LeftOuter),
+    #"Expanded HC" = Table.ExpandTableColumn(Merged_HC, "HC", {"OracleID", "People ID", "IEX ID", "Employee Name", "Alias Name", "Designation", "Wave", "Detail Status", "Tenure", "LOB_2", "Night_Shift", "Datetime_Start_Shift", "Datetime_End_Shift"}, {"OracleID", "People ID", "IEX ID", "Employee Name", "Alias Name", "Designation", "Wave", "Detail Status", "Tenure", "LOB_2", "Night_Shift", "Datetime_Start_Shift", "Datetime_End_Shift"}),
+    add_productive = Table.AddColumn(#"Expanded HC", "Check", each if 
+        [Agent State] = "Ready-IDLE" or 
+        [Agent State] = "Ready-ACTIVE" or 
+        [Agent State] = "Outbound Call-ACTIVE" or
+        [Agent State] = "Training-ACTIVE" or
+        [Agent State] = "Team Meeting-ACTIVE" or
+        [Agent State] = "System Issue-ACTIVE" or
+        [Agent State] = "Restroom-ACTIVE" or
+        [Agent State] = "Offline Work-ACTIVE" or
+        [Agent State] = "Lunch-ACTIVE" or
+        [Agent State] = "Log out-ACTIVE" or
+        [Agent State] = "End of Shift-ACTIVE" or
+        [Agent State] = "Coaching-ACTIVE" or
+        [Agent State] = "Break-ACTIVE" then "Productive" else "Unproductive"),
+    Agent_Activity_Temp = Table.AddColumn(
+        add_productive,
+        "Previous_Date",
+        each Date.AddDays([Date], -1), type date
+    ),
+    Merge_table_with_Schedule_previous_day = Table.NestedJoin(
+        Agent_Activity_Temp,
+        {"Agent Email", "Previous_Date"},
+        Roster,
+        {"Email", "Scheduled_Date"},"Shift_Table", JoinKind.LeftOuter
+    ),
+    Expanded_Shift_2 = Table.ExpandTableColumn(Merge_table_with_Schedule_previous_day, "Shift_Table", {"Start_Shift"}, {"Previous_Start_Shift"}),
+    AddedCustomNight_Shift_2_Check = Table.AddColumn(
+        Expanded_Shift_2,
+        "Night_Shift_2_Check",
+        each if 
+            [Night_Shift] = 0 and 
+            Time.From([Start Time]) <= #time(12, 0, 0) and
+            Time.From([Start Time]) >= #time(0, 0, 0) and
+            Time.From([Previous_Start_Shift]) <= #time(23, 59, 0) and
+            Time.From([Previous_Start_Shift]) >= #time(18, 0, 0)
+        then false else true
+    ),
+    UpdatedNight_Shift = Table.ReplaceValue(
+        AddedCustomNight_Shift_2_Check, 
+        each [Night_Shift], 
+        each if [Night_Shift_2_Check] = false 
+        then 1 else [Night_Shift], Replacer.ReplaceValue,{"Night_Shift"}),
+
+    AddedCustom_Date_Converted = Table.AddColumn(
+        UpdatedNight_Shift,
+        "Date_Converted",
+        each 
+            let
+                startTime = Time.Hour([Start Time]),
+                nightShift = [Night_Shift],
+                date = [Date],
+                nightShiftStart = 0,
+                nightShiftEnd = 0,
+                newDate =
+                    if startTime >= 0 and startTime < 8 and nightShift = 1 then 
+                        Date.AddDays(date, -1)
+                    else if startTime >= 5 and startTime < 18 and nightShift = 0 then 
+                        date
+                    else if startTime >= 18 and nightShift = 1 then 
+                        date
+                    else 
+                        date
+            in
+                newDate, type date
+    ),
+    #"Removed Columns" = Table.RemoveColumns(AddedCustom_Date_Converted,{"Previous_Date", "Previous_Start_Shift", "Night_Shift_2_Check", "Night_Shift"}),
+    Merged_Shift_3 = Table.NestedJoin(
+        #"Removed Columns",
+        {"Agent Email", "Date_Converted"},
+        Roster,
+        {"Email", "Scheduled_Date"},"Shift_Table", JoinKind.LeftOuter
+    ),
+    #"Expanded Shift_Table" = Table.ExpandTableColumn(Merged_Shift_3, "Shift_Table", {"Shift"}, {"Shift"}),
+    #"Reordered Columns2" = Table.ReorderColumns(#"Expanded Shift_Table",{"Date_Converted", "Date", "Intervals", "Shift", "Agent Email", "Agent State", "Start Time", "End Time", "Extend_Start_Time", "Extend_End_Time", "Duration", "OracleID", "People ID", "IEX ID", "Employee Name", "Alias Name", "Designation", "Wave", "Detail Status", "Tenure", "LOB_2", "Check"}),
+    Added_Intervals_Datetime = Table.AddColumn(#"Reordered Columns2","Intervals_Datetime", each DateTime.FromText(Text.From([Intervals]) & " " & Text.From([Date]))
+            + #duration(0, 0, 0, Time.Second([Intervals])), type datetime),
+    Added_Pre_Shift = Table.AddColumn(Added_Intervals_Datetime, "Prod_Pre_Shift", each if [Intervals_Datetime] < [Datetime_Start_Shift] and [Check] = "Productive" then [Duration] else 0, type number),
+    Added_Post_Shift = Table.AddColumn(Added_Pre_Shift, "Prod_Post_Shift", each if [Intervals_Datetime] >= [Datetime_End_Shift] and [Check] = "Productive" then [Duration] else 0, type number),
+    Extend_Final = Table.Buffer(Added_Post_Shift)
+in
+    Extend_Final
