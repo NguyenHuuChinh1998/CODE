@@ -1,0 +1,1 @@
+pip install -r "C:\Users\ADMIN\Downloads\requirements.txt"
