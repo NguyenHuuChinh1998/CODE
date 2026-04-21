@@ -1,1 +1,7 @@
+git
+
+git config --global user.name "Nguyen Huu Chinh"
+git config --global user.email "iamnguyenhuuchinh@gmail.com"
+git config --list
+
 pip install -r "C:\Users\ADMIN\Downloads\requirements.txt"
