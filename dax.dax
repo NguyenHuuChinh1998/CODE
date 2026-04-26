@@ -1,0 +1,247 @@
+_kpi_num = 
+VAR current_index = MAX('_dim_Metrics'[index])
+VAR metric_name   = LOOKUPVALUE('_dim_Metrics'[measure], '_dim_Metrics'[index], current_index)
+VAR metric_lower  = LOWER(SUBSTITUTE(SUBSTITUTE(metric_name, " ", ""), "(%)", ""))
+VAR is_ctrb       = RIGHT(metric_lower, 5) = "_ctrb"
+
+VAR filteredtab = FILTER('1_data_raw', '1_data_raw'[People ID] = MAX('1_data_raw'[People ID]))
+
+VAR _agent_name = CALCULATE(CONCATENATEX(SUMMARIZE('1_data_raw', [Employee Name]), [Employee Name], ", "), filteredtab)
+VAR _agent_wave = CALCULATE(CONCATENATEX(SUMMARIZE('1_data_raw', [Wave]), [Wave], ", "), filteredtab)
+VAR _agent_tl   = CALCULATE(CONCATENATEX(SUMMARIZE('1_data_raw', [Supervisor Name]), [Supervisor Name], ", "), filteredtab)
+
+VAR _chat_with_filter = COUNTROWS(SUMMARIZE('1_data_raw', [_conver_unique]))
+VAR _chat_in_total    = CALCULATE(COUNTROWS(SUMMARIZE('1_data_raw', [_conver_unique])), '1_data_raw')
+
+VAR _aht = AVERAGEX(GROUPBY('1_data_raw', [_conver_unique], "@ht", MAXX(CURRENTGROUP(), [Handle Time (Sum)])), [@ht])
+VAR _lc  = DIVIDE(SUMX(SUMMARIZE('1_data_raw', [_conver_unique], [_lc]), [_lc]), _chat_with_filter)
+VAR _aob = AVERAGEX(SUMMARIZE('1_data_raw', [_conver_unique], [_aob]), [_aob])
+VAR _fup_72 = CALCULATE(AVERAGEX('1_data_raw', [CCR72]), '1_data_raw')
+VAR _rr  = IF(ISBLANK(_chat_with_filter) || _chat_with_filter = 0, BLANK(), 1 - _fup_72)
+VAR _t3  = DIVIDE(SUMX(SUMMARIZE('1_data_raw', [_conver_unique], [T3]), [T3]), SUM('1_data_raw'[Handle (Count)]))
+
+VAR _su = SUMX('1_data_raw', [_survey])
+VAR _pr = SUMX('1_data_raw', [_promoter])
+VAR _de = SUMX('1_data_raw', [_detractor])
+VAR _ne = SUMX('1_data_raw', [_neutral])
+VAR _nps = DIVIDE(_pr - _de, _su)
+
+VAR _passed = SUMX('1_data_raw', IFERROR(VALUE('1_data_raw'[Passed Sessions]), 0))
+VAR _failed = SUMX('1_data_raw', IFERROR(VALUE('1_data_raw'[Failed Sessions]), 0))
+VAR _total  = SUMX('1_data_raw', IFERROR(VALUE('1_data_raw'[Total Sessions]), 0))
+VAR _fcr    = DIVIDE(_passed, _total)
+
+VAR _current_date = MAX('1_data_raw'[_PST.Date])
+VAR _lob_raw      = SELECTEDVALUE('1_data_raw'[LOB])
+VAR _safe_lob     = IF(CONTAINSSTRING(UPPER(_lob_raw), "NON") || CONTAINSSTRING(UPPER(_lob_raw), "NL"), "NL Chat", "LG Chat")
+
+VAR _nps_tar = MAXX(TOPN(1, FILTER(ALL(_dim_Target), _dim_Target[LOB] = _safe_lob && _dim_Target[Metric] = "NPS" && _dim_Target[Eff_Date] <= _current_date), _dim_Target[Eff_Date], DESC), [Target])
+VAR _nps_weight = MAXX(TOPN(1, FILTER(ALL(_dim_Target), _dim_Target[LOB] = _safe_lob && _dim_Target[Metric] = "NPS" && _dim_Target[Eff_Date] <= _current_date), _dim_Target[Eff_Date], DESC), [Weight])
+VAR _nps_att = IF(ISBLANK(_nps), BLANK(), IF(DIVIDE(_nps, _nps_tar / 100) >= 1, 1, DIVIDE(_nps, _nps_tar / 100)))
+VAR _valid_date_nps = MAXX(FILTER(ALL(_dim_score_card), _dim_score_card[LOB] = _safe_lob && _dim_score_card[Metric] = "NPS" && _dim_score_card[Eff_Date] <= _current_date), _dim_score_card[Eff_Date])
+VAR _nps_score = MAXX(FILTER(ALL(_dim_score_card), _dim_score_card[LOB] = _safe_lob && _dim_score_card[Metric] = "NPS" && _dim_score_card[Eff_Date] = _valid_date_nps && _dim_score_card[Range] <= _nps), [Score])
+
+VAR _lc_tar = MAXX(TOPN(1, FILTER(ALL(_dim_Target), _dim_Target[LOB] = _safe_lob && _dim_Target[Metric] = "LC" && _dim_Target[Eff_Date] <= _current_date), _dim_Target[Eff_Date], DESC), [Target])
+VAR _lc_weight = MAXX(TOPN(1, FILTER(ALL(_dim_Target), _dim_Target[LOB] = _safe_lob && _dim_Target[Metric] = "LC" && _dim_Target[Eff_Date] <= _current_date), _dim_Target[Eff_Date], DESC), [Weight])
+VAR _lc_att = IF(ISBLANK(_lc), BLANK(), IF(_lc_tar >= _lc, 1, DIVIDE(_lc_tar, _lc)))
+VAR _valid_date_lc = MAXX(FILTER(ALL(_dim_score_card), _dim_score_card[LOB] = _safe_lob && _dim_score_card[Metric] = "LC" && _dim_score_card[Eff_Date] <= _current_date), _dim_score_card[Eff_Date])
+VAR _lc_score = MINX(FILTER(ALL(_dim_score_card), _dim_score_card[LOB] = _safe_lob && _dim_score_card[Metric] = "LC" && _dim_score_card[Eff_Date] = _valid_date_lc && _dim_score_card[Range] <= _lc), [Score])
+
+VAR _aht_tar = MAXX(TOPN(1, FILTER(ALL(_dim_Target), _dim_Target[LOB] = _safe_lob && _dim_Target[Metric] = "AHT" && _dim_Target[Eff_Date] <= _current_date), _dim_Target[Eff_Date], DESC), [Target])
+VAR _aht_weight = MAXX(TOPN(1, FILTER(ALL(_dim_Target), _dim_Target[LOB] = _safe_lob && _dim_Target[Metric] = "AHT" && _dim_Target[Eff_Date] <= _current_date), _dim_Target[Eff_Date], DESC), [Weight])
+VAR _aht_att = IF(ISBLANK(_aht), BLANK(), IF(DIVIDE(_aht_tar, _aht) >= 1, 1, DIVIDE(_aht_tar, _aht)))
+VAR _valid_date_aht = MAXX(FILTER(ALL(_dim_score_card), _dim_score_card[LOB] = _safe_lob && _dim_score_card[Metric] = "AHT" && _dim_score_card[Eff_Date] <= _current_date), _dim_score_card[Eff_Date])
+VAR _aht_score = MINX(FILTER(ALL(_dim_score_card), _dim_score_card[LOB] = _safe_lob && _dim_score_card[Metric] = "AHT" && _dim_score_card[Eff_Date] = _valid_date_aht && _dim_score_card[Range] <= _aht), [Score])
+
+VAR _fcr_tar = MAXX(TOPN(1, FILTER(ALL(_dim_Target), _dim_Target[LOB] = _safe_lob && _dim_Target[Metric] = "FCR" && _dim_Target[Eff_Date] <= _current_date), _dim_Target[Eff_Date], DESC), [Target])
+VAR _fcr_weight = MAXX(TOPN(1, FILTER(ALL(_dim_Target), _dim_Target[LOB] = _safe_lob && _dim_Target[Metric] = "FCR" && _dim_Target[Eff_Date] <= _current_date), _dim_Target[Eff_Date], DESC), [Weight])
+VAR _fcr_att = IF(ISBLANK(_fcr), BLANK(), IF(DIVIDE(_fcr, _fcr_tar / 100) >= 1, 1, DIVIDE(_fcr, _fcr_tar / 100)))
+VAR _valid_date_fcr = MAXX(FILTER(ALL(_dim_score_card), _dim_score_card[LOB] = _safe_lob && _dim_score_card[Metric] = "FCR" && _dim_score_card[Eff_Date] <= _current_date), _dim_score_card[Eff_Date])
+VAR _fcr_score = MAXX(FILTER(ALL(_dim_score_card), _dim_score_card[LOB] = _safe_lob && _dim_score_card[Metric] = "FCR" && _dim_score_card[Eff_Date] = _valid_date_fcr && _dim_score_card[Range] <= _fcr * 100), [Score])
+
+VAR _upl = DIVIDE(SUM(ATD[Unplanned]), SUM(ATD[HC Schedule]))
+VAR _upl_tar = MAXX(TOPN(1, FILTER(ALL(_dim_Target), _dim_Target[LOB] = _safe_lob && _dim_Target[Metric] = "UPL" && _dim_Target[Eff_Date] <= _current_date), _dim_Target[Eff_Date], DESC), [Target])
+VAR _upl_weight = MAXX(TOPN(1, FILTER(ALL(_dim_Target), _dim_Target[LOB] = _safe_lob && _dim_Target[Metric] = "UPL" && _dim_Target[Eff_Date] <= _current_date), _dim_Target[Eff_Date], DESC), [Weight])
+VAR _upl_att = IF(ISBLANK(_upl), BLANK(), IF(_upl <= _upl_tar, 1, DIVIDE(_upl_tar, _upl)))
+VAR _valid_date_upl = MAXX(FILTER(ALL(_dim_score_card), _dim_score_card[LOB] = _safe_lob && _dim_score_card[Metric] = "UPL" && _dim_score_card[Eff_Date] <= _current_date), _dim_score_card[Eff_Date])
+VAR _upl_score = MINX(FILTER(ALL(_dim_score_card), _dim_score_card[LOB] = _safe_lob && _dim_score_card[Metric] = "UPL" && _dim_score_card[Eff_Date] = _valid_date_upl && _dim_score_card[Range] <= _upl), [Score])
+
+VAR _delight   = AVERAGEX( filteredtab, [delight] )
+VAR _usability = AVERAGEX( filteredtab, [usability] )
+VAR _ease      = AVERAGEX( filteredtab, [ease] )
+VAR _trust     = AVERAGEX( filteredtab, [trust] )
+VAR _duet      = AVERAGEX( filteredtab, [DUET] )
+
+VAR _re_direct =
+    VAR __DedupRe = SUMMARIZE('1_data_raw', '1_data_raw'[People ID], '1_data_raw'[Conversation Id], "__Re", MAX('1_data_raw'[Re_Direct]))
+    RETURN DIVIDE(SUMX(__DedupRe, [__Re]), _chat_with_filter)
+
+VAR _exceed_chat =
+    VAR __DedupEx = SUMMARIZE('1_data_raw', '1_data_raw'[People ID], '1_data_raw'[Conversation Id], "__Ex", MAX('1_data_raw'[Exceed Chat]))
+    RETURN DIVIDE(SUMX(__DedupEx, [__Ex]), _chat_with_filter)
+
+VAR _duet_tar = MAXX(TOPN(1, FILTER(ALL(_dim_Target), _dim_Target[LOB] = _safe_lob && _dim_Target[Metric]="DUET" && _dim_Target[Eff_Date] <= _current_date), _dim_Target[Eff_Date], DESC), [Target])
+VAR _duet_weight = MAXX(TOPN(1, FILTER(ALL(_dim_Target), _dim_Target[LOB] = _safe_lob && _dim_Target[Metric]="DUET" && _dim_Target[Eff_Date] <= _current_date), _dim_Target[Eff_Date], DESC), [Weight])
+VAR _duet_att = IF(ISBLANK(_duet), BLANK(), IF(_duet >= (_duet_tar / 100), 1, DIVIDE(_duet, _duet_tar / 100)))
+VAR _valid_date_duet = MAXX(FILTER(ALL(_dim_score_card), _dim_score_card[LOB] = _safe_lob && _dim_score_card[Metric] = "DUET" && _dim_score_card[Eff_Date] <= _current_date), _dim_score_card[Eff_Date])
+VAR _duet_score = MAXX(FILTER(ALL(_dim_score_card), _dim_score_card[LOB] = _safe_lob && _dim_score_card[Metric] = "DUET" && _dim_score_card[Eff_Date] = _valid_date_duet && _dim_score_card[Range] <= _duet), [Score])
+
+VAR _exc_tar = MAXX(TOPN(1, FILTER(ALL(_dim_Target), _dim_Target[LOB] = _safe_lob && _dim_Target[Metric]="EXC" && _dim_Target[Eff_Date] <= _current_date), _dim_Target[Eff_Date], DESC), [Target])
+VAR _exc_weight = MAXX(TOPN(1, FILTER(ALL(_dim_Target), _dim_Target[LOB] = _safe_lob && _dim_Target[Metric]="EXC" && _dim_Target[Eff_Date] <= _current_date), _dim_Target[Eff_Date], DESC), [Weight])
+VAR _exc_att = IF(ISBLANK(_exceed_chat), BLANK(), IF(_exceed_chat <= _exc_tar, 1, DIVIDE(_exc_tar, _exceed_chat)))
+VAR _valid_date_exc = MAXX(FILTER(ALL(_dim_score_card), _dim_score_card[LOB] = _safe_lob && _dim_score_card[Metric] = "EXC" && _dim_score_card[Eff_Date] <= _current_date), _dim_score_card[Eff_Date])
+VAR _exc_score = MINX(FILTER(ALL(_dim_score_card), _dim_score_card[LOB] = _safe_lob && _dim_score_card[Metric] = "EXC" && _dim_score_card[Eff_Date] = _valid_date_exc && _dim_score_card[Range] <= _exceed_chat), [Score])
+
+VAR _nps_bonus = IF(_nps > _nps_tar && _nps_tar > 0, DIVIDE(_nps - _nps_tar, _nps_tar), 0)
+VAR _nps_pro   = IF(ISBLANK(_nps), BLANK(), (COALESCE(_nps_score, 0) + _nps_bonus) * COALESCE(_nps_weight, 0))
+
+VAR _fcr_bonus = IF(_fcr > _fcr_tar && _fcr_tar > 0, DIVIDE(_fcr - _fcr_tar, _fcr_tar), 0)
+VAR _fcr_pro   = IF(ISBLANK(_fcr), BLANK(), (COALESCE(_fcr_score, 0) + _fcr_bonus) * COALESCE(_fcr_weight, 0))
+
+VAR _duet_bonus= IF(_duet > /dashboards/97b4fc3c-0bb7-4065-9354-ab5546827f33 && _duet_tar > 0, DIVIDE(_duet - _duet_tar, _duet_tar), 0)
+VAR _duet_pro  = IF(ISBLANK(_duet), BLANK(), (COALESCE(_duet_score, 0) + _duet_bonus) * COALESCE(_duet_weight, 0))
+
+VAR _lc_bonus  = IF(_lc < _lc_tar && _lc_tar > 0, DIVIDE(_lc_tar - _lc, _lc_tar), 0)
+VAR _lc_pro    = IF(ISBLANK(_lc), BLANK(), (COALESCE(_lc_score, 0) + _lc_bonus) * COALESCE(_lc_weight, 0))
+
+VAR _exc_bonus = IF(_exceed_chat < _exc_tar && _exc_tar > 0, DIVIDE(_exc_tar - _exceed_chat, _exc_tar), 0)
+VAR _exc_pro   = IF(ISBLANK(_exceed_chat), BLANK(), (COALESCE(_exc_score, 0) + _exc_bonus) * COALESCE(_exc_weight, 0))
+
+VAR _upl_bonus = IF(_upl < _upl_tar && _upl_tar > 0, DIVIDE(_upl_tar - _upl, _upl_tar), 0)
+VAR _upl_pro   = IF(ISBLANK(_upl), BLANK(), (COALESCE(_upl_score, 0) + _upl_bonus) * COALESCE(_upl_weight, 0))
+
+VAR _aht_bonus = IF(_aht < _aht_tar && _aht_tar > 0, DIVIDE(_aht_tar - _aht, _aht_tar), 0)
+VAR _aht_pro   = IF(ISBLANK(_aht), BLANK(), (COALESCE(_aht_score, 0) + _aht_bonus) * COALESCE(_aht_weight, 0))
+
+VAR point        = _nps_att * _nps_weight + _lc_att * _lc_weight + _aht_att * _aht_weight + _upl_att * _upl_weight
+VAR _lob_score   = _nps_score * _nps_weight + _lc_score * _lc_weight + _aht_score * _aht_weight + _fcr_score * _fcr_weight + _exc_score * _exc_weight
+VAR _final_score = DIVIDE(_lob_score * _chat_with_filter, _chat_in_total)
+
+VAR _pla_tar_duet = MAXX(TOPN(1, FILTER(ALL(_dim_Target), _dim_Target[LOB] = _safe_lob && _dim_Target[Metric]="DUET" && _dim_Target[Eff_Date] <= _current_date), _dim_Target[Eff_Date], DESC), [Target])
+VAR _pla_w_duet   = MAXX(TOPN(1, FILTER(ALL(_dim_Target), _dim_Target[LOB] = _safe_lob && _dim_Target[Metric]="DUET" && _dim_Target[Eff_Date] <= _current_date), _dim_Target[Eff_Date], DESC), [Weight])
+
+VAR _pla_tar_exc = MAXX(TOPN(1, FILTER(ALL(_dim_Target), _dim_Target[LOB] = _safe_lob && _dim_Target[Metric]="EXC" && _dim_Target[Eff_Date] <= _current_date), _dim_Target[Eff_Date], DESC), [Target])
+VAR _pla_w_exc   = MAXX(TOPN(1, FILTER(ALL(_dim_Target), _dim_Target[LOB] = _safe_lob && _dim_Target[Metric]="EXC" && _dim_Target[Eff_Date] <= _current_date), _dim_Target[Eff_Date], DESC), [Weight])
+
+VAR _pla_tar_fcr_pla = MAXX(TOPN(1, FILTER(ALL(_dim_Target), _dim_Target[LOB] = _safe_lob && _dim_Target[Metric]="FCR" && _dim_Target[Eff_Date] <= _current_date), _dim_Target[Eff_Date], DESC), [Target])
+VAR _pla_w_fcr_pla   = MAXX(TOPN(1, FILTER(ALL(_dim_Target), _dim_Target[LOB] = _safe_lob && _dim_Target[Metric]="FCR" && _dim_Target[Eff_Date] <= _current_date), _dim_Target[Eff_Date], DESC), [Weight])
+
+VAR _pla_att_duet = IF(ISBLANK(_duet), BLANK(), IF(_duet >= (_pla_tar_duet / 100), 1, DIVIDE(_duet, _pla_tar_duet / 100)))
+VAR _pla_att_aht  = _aht_att
+VAR _pla_att_lc   = _lc_att
+VAR _pla_att_exc  = IF(ISBLANK(_exceed_chat), BLANK(), IF(_exceed_chat <= _pla_tar_exc, 1, DIVIDE(_pla_tar_exc, _exceed_chat)))
+VAR _pla_att_nps  = _nps_att
+VAR _pla_att_fcr  = IF(ISBLANK(_fcr), BLANK(), IF(_fcr >= (_pla_tar_fcr_pla / 100), 1, DIVIDE(_fcr, _pla_tar_fcr_pla / 100)))
+
+VAR _pla_score_duet = _pla_att_duet * _pla_w_duet
+VAR _pla_score_aht  = _pla_att_aht * _aht_weight
+VAR _pla_score_lc   = _pla_att_lc * _lc_weight
+VAR _pla_score_exc  = _pla_att_exc * _pla_w_exc
+VAR _pla_score_nps  = _pla_att_nps * _nps_weight
+VAR _pla_score_fcr  = _pla_att_fcr * _pla_w_fcr_pla
+
+VAR _pla_total_score = _pla_score_duet + _pla_score_aht + _pla_score_lc + _pla_score_exc + _pla_score_nps + _pla_score_fcr
+
+VAR _pla_level_txt = 
+    IF(
+        ISBLANK(_chat_with_filter) || _chat_with_filter = 0, 
+        BLANK(),
+        MAXX(
+            TOPN(1, FILTER(ALL('_dim_pla_levels'), _pla_total_score >= '_dim_pla_levels'[Grid]), '_dim_pla_levels'[Grid], DESC),
+            '_dim_pla_levels'[PLA]
+        )
+    )
+
+VAR _pla_avg_att = DIVIDE(_aht_att + _fcr_att + _nps_att + _lc_att + _exc_att + _upl_att, 6)
+
+RETURN
+IF(
+    is_ctrb,
+    BLANK(),
+    SWITCH(
+        current_index,
+        "00", _agent_name,
+        "01", _agent_wave,
+        "02", _agent_tl,
+        "03", _chat_with_filter,
+
+        "04", _aht,
+        "05", _aht_tar,
+        "06", _aht_att * 100,
+        "07", _aht_score,
+
+        "08", _lc * 100,
+        "09", _lc_tar * 100,
+        "10", _lc_att * 100,
+        "11", _lc_score,
+
+        "12", ROUND(_nps * 100, 0),
+        "13", _nps_tar,
+        "14", _nps_att * 100,
+        "15", _nps_score,
+
+        "16", _su,
+        "17", BLANK(),
+        "18", _pr,
+        "19", BLANK(),
+        "20", _de,
+        "21", BLANK(),
+        "22", _ne,
+        "23", BLANK(),
+
+        "24", ROUND(_duet, 0),
+        "25", _duet_tar,
+        "26", _duet_att * 100,
+        "27", _duet_score,
+
+        "28", _exceed_chat * 100,
+        "29", _exc_tar * 100,
+        "30", _exc_att * 100,
+        "31", _exc_score,
+
+        "32", ROUND(_fcr * 100, 0),
+        "33", _fcr_tar,
+        "34", _fcr_att * 100,
+        "35", _fcr_score,
+        "36", _passed,
+        "37", _failed,
+        "38", _total,
+
+        "39", _upl * 100,
+        "40", _upl_tar * 100,
+        "41", _upl_att * 100,
+        "42", _upl_score,
+
+        "43", _aob * 100,
+        "44", _fup_72 * 100,
+        "45", _rr * 100,
+        "46", _re_direct * 100,
+        "47", _delight,
+        "48", _usability,
+        "49", _ease,
+        "50", _trust,
+
+        "51", _pla_att_aht * 100,
+        "52", _pla_att_lc * 100,
+        "53", _pla_att_nps * 100,
+        "54", _pla_att_fcr * 100,
+        "55", _pla_att_exc * 100,
+        "56", _pla_att_duet * 100,
+        "57", _pla_total_score * 100,
+        "58", _pla_level_txt,
+        
+        "59", _aht_pro,
+        "60", _lc_pro,
+        "61", _nps_pro,
+        "62", _duet_pro,
+        "63", _exc_pro,
+        "64", _fcr_pro,
+        "65", _upl_pro,
+
+        "66", point * 100,
+        "67", _final_score,
+        "68", _pla_avg_att * 100,
+        "69", _lob_score,
+        "70", _t3*100
+    )
+)
