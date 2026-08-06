@@ -85,6 +85,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.common.exceptions import TimeoutException, NoAlertPresentException, WebDriverException
+from selenium.webdriver.common.action_chains import ActionChains
 from datetime import datetime, timedelta
 
 CHROMEDRIVER   = r"C:\Users\huuchinh.nguyen\Concentrix Corporation\WFM-Expedia-HCM - Branding files\Rawdata\CAPTURE\chromedriver-win64\chromedriver.exe"
@@ -213,80 +214,158 @@ def cnx_auth_login(driver):
         print("  ✅ No Concentrix Auth prompt — skipping")
 
 def check_and_login(driver, url, manual_login_timeout=120) -> bool:
+    from selenium.webdriver.common.action_chains import ActionChains
+
+    def is_on_app(drv):
+        u = drv.current_url
+        return ("vap.expedia.com" in u and
+                "/login" not in u and
+                "okta.com" not in u)
+
     print(f"  🌐 Navigating to: {url.split('/')[-1]}")
     driver.get(url); time.sleep(15)
 
-    try:
-        sign_btn = WebDriverWait(driver, 5).until(
-            EC.element_to_be_clickable(
-                (By.CSS_SELECTOR, 'button[data-testid="console-okta-sign-in"]')))
-        print("  🔑 Okta sign-in detected, clicking...")
-        sign_btn.click(); time.sleep(2)
+    screenshot_path = r"C:\Users\huuchinh.nguyen\Concentrix Corporation\WFM-Expedia-HCM - Branding files\Rawdata\CAPTURE\bot_log\screenshot_login.png"
+    driver.save_screenshot(screenshot_path)
+    print(f"  📸 Screenshot saved: {screenshot_path}")
 
-        # Click Remember me
+    modals = driver.execute_script("""
+        return Array.from(document.querySelectorAll('*')).filter(el => {
+            const style = window.getComputedStyle(el);
+            const cls = (typeof el.className === 'string') ? el.className : '';
+            return (
+                cls.includes('modal') || cls.includes('popup') ||
+                cls.includes('dialog') || cls.includes('overlay') ||
+                cls.includes('alert') || cls.includes('banner') ||
+                el.getAttribute('role') === 'dialog' ||
+                el.getAttribute('role') === 'alertdialog'
+            ) && style.display !== 'none' && style.visibility !== 'hidden'
+                && el.offsetHeight > 0;
+        }).map(el => ({
+            tag: el.tagName,
+            id: el.id,
+            class: (typeof el.className === 'string' ? el.className : '').substring(0, 100),
+            role: el.getAttribute('role'),
+            text: el.innerText?.substring(0, 50)
+        }));
+    """)
+    if modals:
+        print(f"  🔍 Detected {len(modals)} modal-like elements:")
+        for m in modals[:5]:
+            print(f"     tag={m['tag']} | id={m['id']} | class={m['class'][:60]} | text={m['text']}")
+    else:
+        print("  ✅ No modal detected")
+
+    # Already logged in
+    if is_on_app(driver):
+        print("  ✅ Already authenticated")
+    else:
         try:
-            WebDriverWait(driver, 10).until(EC.element_to_be_clickable(
-                (By.CSS_SELECTOR, 'label[for="input36"][data-se-for-name="rememberMe"]'))).click()
-            time.sleep(1)
-        except TimeoutException: pass
+            # Step 1: Click "Log in with SSO"
+            sign_btn = WebDriverWait(driver, 8).until(
+                EC.element_to_be_clickable(
+                    (By.CSS_SELECTOR, 'button[data-testid="console-okta-sign-in"]')))
+            print("  🔑 SSO button detected, clicking...")
+            sign_btn.click()
 
-        # Click Next — try multiple selectors
-        next_clicked = False
-        for sel in [
-            'input.button.button-primary[type="submit"][value="Next"]',
-            'input[type="submit"][value="Next"]',
-            'input[type="submit"]',
-            'button[type="submit"]',
-            '[data-type="save"]',
-        ]:
+            # Step 2: Wait for Okta page
+            WebDriverWait(driver, 20).until(EC.url_contains("okta.com"))
+            time.sleep(3)
+            print(f"  ✅ On Okta: {driver.current_url[:60]}")
+
+            # Step 3: Check/fill username field
             try:
-                btn = WebDriverWait(driver, 5).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, sel)))
-                driver.execute_script("arguments[0].click();", btn)
-                print(f"  ✅ Clicked Next (Okta) via: {sel}")
-                next_clicked = True
-                break
+                ufield = WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located(
+                        (By.CSS_SELECTOR, 'input[name="identifier"], input[type="text"]')))
+                val = ufield.get_attribute('value') or ''
+                if not val.strip():
+                    ufield.clear()
+                    ufield.send_keys(CNX_USER)
+                    print(f"  ✅ Filled username: {CNX_USER}")
+                else:
+                    print(f"  ✅ Username pre-filled: {val}")
+                time.sleep(0.5)
             except TimeoutException:
-                continue
-        if not next_clicked:
-            print("  ⚠️ Next button not found — waiting for manual/SSO login...")
+                print("  ⚠️ No username field found")
 
-        deadline = time.time() + manual_login_timeout
-        while time.time() < deadline:
-            if "expedia.com" in driver.current_url or "vap.expedia" in driver.current_url:
-                print("  🎉 Okta login completed"); break
-            time.sleep(2)
-        else:
-            print(f"  ⚠️ Okta timeout | URL: {driver.current_url}")
+            # Step 4: Click Remember me
+            try:
+                lbl = WebDriverWait(driver, 5).until(EC.element_to_be_clickable(
+                    (By.CSS_SELECTOR, 'label[for="input36"][data-se-for-name="rememberMe"]')))
+                lbl.click()
+                print("  ✅ Clicked 'Keep me signed in'")
+                time.sleep(0.5)
+            except TimeoutException: pass
 
-        try: driver.switch_to.alert.accept()
-        except NoAlertPresentException: pass
+            # Step 5: Click Next with ActionChains (simulates real mouse click)
+            next_clicked = False
+            for sel in [
+                'input.button.button-primary[type="submit"][value="Next"]',
+                'input[type="submit"][value="Next"]',
+                'input[type="submit"]',
+            ]:
+                try:
+                    btn = WebDriverWait(driver, 5).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, sel)))
+                    driver.execute_script("arguments[0].scrollIntoView(true);", btn)
+                    time.sleep(0.5)
+                    ActionChains(driver).move_to_element(btn).click().perform()
+                    print(f"  ✅ Clicked Next via ActionChains ({sel})")
+                    next_clicked = True
+                    break
+                except TimeoutException: continue
 
-        if url not in driver.current_url:
-            driver.get(url); time.sleep(5)
+            if not next_clicked:
+                # Fallback: submit form via JS
+                try:
+                    driver.execute_script("document.querySelector('form').submit();")
+                    print("  ✅ Submitted form via JS fallback")
+                    next_clicked = True
+                except: pass
 
-    except TimeoutException:
-        try:
-            WebDriverWait(driver, 5).until(
-                EC.presence_of_element_located((By.XPATH,
-                    '//span[contains(@class,"largeTextNoWrap") and '
-                    'contains(text(),"Concentrix Authentication")]')))
-            print("  🔑 Concentrix Auth page detected")
-            cnx_auth_login(driver)
+            if not next_clicked:
+                print("  ⚠️ Could not click Next — waiting for manual action...")
 
+            # Step 6: Wait for redirect to actual app (NOT login page)
             deadline = time.time() + manual_login_timeout
             while time.time() < deadline:
-                if "expedia.com" in driver.current_url or "vap.expedia" in driver.current_url:
-                    print("  🎉 Login completed — redirected to Expedia"); break
-                time.sleep(2)
+                if is_on_app(driver):
+                    print(f"  🎉 Login completed | URL: {driver.current_url[:60]}")
+                    break
+                cur = driver.current_url
+                print(f"  ⏳ Waiting... ({cur[:50]})")
+                time.sleep(3)
             else:
                 print(f"  ⚠️ Login timeout | URL: {driver.current_url}")
 
-            if url not in driver.current_url:
-                driver.get(url); time.sleep(5)
-
         except TimeoutException:
-            print("  ✅ No login prompt — already authenticated")
+            # No SSO button — check Concentrix Auth
+            try:
+                WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((By.XPATH,
+                        '//span[contains(@class,"largeTextNoWrap") and '
+                        'contains(text(),"Concentrix Authentication")]')))
+                print("  🔑 Concentrix Auth page detected")
+                cnx_auth_login(driver)
+
+                deadline = time.time() + manual_login_timeout
+                while time.time() < deadline:
+                    if is_on_app(driver):
+                        print("  🎉 Login completed"); break
+                    time.sleep(3)
+                else:
+                    print(f"  ⚠️ Login timeout | URL: {driver.current_url}")
+
+            except TimeoutException:
+                print("  ✅ No login prompt — already authenticated")
+
+    # Navigate to target if not already there
+    if url not in driver.current_url:
+        driver.get(url); time.sleep(5)
+
+    try: driver.switch_to.alert.accept()
+    except NoAlertPresentException: pass
 
     try:
         WebDriverWait(driver, LOGIN_TIMEOUT).until(

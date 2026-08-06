@@ -40,7 +40,7 @@ LOB_MAP = {
     ],
     "NL Chat": [
         "Chat - Global English Non- Lodging Nesting","Chat_OD_EN_Dual_GDS",
-        "Chat_AC_GLB_EN_Proficient","Chat_AC_GLB_EN_Expert",
+        "Chat_AC_GLB_EN_Proficient","Chat_AC_GLB_EN_Expert", "Chat_AC_GLB_EN_NL_Nesting"
     ],
 }
 LOC_STYLE = {
