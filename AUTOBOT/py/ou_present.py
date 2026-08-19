@@ -22,14 +22,14 @@ folder_paths = {
     'hc_extend_by_month'  : f'{first_glob}/Concentrix Corporation/WFM-Expedia-HCM - Branding files/Headcount/HC Extend by Month',
 }
 
-output_ou_mail = folder_paths['output_ou_mail']
+output_ou_mail    = folder_paths['output_ou_mail']
 output_ou_details = folder_paths['output_ou_details']
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 ROW_START = 5
 ROW_END   = 53
 
-LC_SHEET_CONFIG = {
+LG_SHEET_CONFIG = {
     'VNM - OU'  : ('E', 'Y'),
     'Kol - OU'  : ('E', 'Y'),
     'Pune - OU' : ('E', 'Y'),
@@ -77,11 +77,34 @@ LOB_MAPPING = {
 LEAVE_LIST = ['Unscheduled', 'PTO', 'Termination', 'Offline', 'Paid Leave']
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
-def find_latest_file(folder: str, keyword: str) -> str:
-    matches = glob_module.glob(os.path.join(folder, f'*{keyword}*.xlsx'))
+def find_latest_file(folder: str, *keywords: str) -> str:
+    matches = []
+    for kw in keywords:
+        matches += glob_module.glob(os.path.join(folder, f'*{kw}*.xlsx'))
+    matches = list(set(matches))
     if not matches:
-        raise FileNotFoundError(f'No file matched "{keyword}" in: {folder}')
-    return max(matches, key=os.path.getmtime)
+        raise FileNotFoundError(
+            f'No file matched any of {keywords} in: {folder}')
+    def _file_date_key(path: str) -> _dt.date:
+        d = extract_week_start(path)
+        return d if d else _dt.date.fromtimestamp(os.path.getmtime(path))
+    matches.sort(key=_file_date_key, reverse=True)
+    for path in matches:
+        try:
+            with open(path, 'rb') as f:
+                f.read(4)
+            print(f'  [FOUND] {os.path.basename(path)} '
+                  f'(week={_file_date_key(path)}, from {len(matches)} candidate(s))')
+            return path
+        except (IOError, OSError):
+            print(f'  [SKIP]  {os.path.basename(path)} '
+                  f'— OneDrive cloud-only, not downloaded yet')
+    names = [os.path.basename(p) for p in matches]
+    raise FileNotFoundError(
+        f'No locally available file for {keywords}.\n'
+        f'  Files found (cloud-only): {names}\n'
+        f'  Fix: right-click in Explorer -> "Always keep on this device"'
+    )
 
 def extract_week_start(file_path: str) -> _dt.date | None:
     match = re.search(r'(\d{2})_(\d{2})_(\d{2})', os.path.basename(file_path))
@@ -130,7 +153,8 @@ def _to_time_str(val) -> str | None:
     return None
 
 def input_data(folder_path: str) -> pl.DataFrame:
-    file_paths = glob_module.glob(f'{folder_path}/*.xlsx') + glob_module.glob(f'{folder_path}/*.csv')
+    file_paths = (glob_module.glob(f'{folder_path}/*.xlsx') +
+                  glob_module.glob(f'{folder_path}/*.csv'))
     df_list = []
     for file in file_paths:
         basename = os.path.basename(file)
@@ -163,24 +187,30 @@ def read_ou_sheet(ws, col_start: str, col_end: str,
         for i, c in enumerate(range(d_start, d_end + 1)):
             v = ws.cell(row=row, column=c).value
             try:
-                data_lists[tmp_data_cols[i]].append(float(v) if v is not None else None)
+                data_lists[tmp_data_cols[i]].append(
+                    float(v) if v is not None else None)
             except (TypeError, ValueError):
                 data_lists[tmp_data_cols[i]].append(None)
     df = pl.DataFrame({'PST': pst_list, **data_lists})
-    df = df.filter(pl.col('PST').is_not_null() & (pl.col('PST').str.strip_chars() != 'PST'))
-    rename_map = {old: new for old, new in zip(tmp_data_cols, DAY_METRIC_COLS[:len(tmp_data_cols)])}
+    df = df.filter(
+        pl.col('PST').is_not_null() &
+        (pl.col('PST').str.strip_chars() != 'PST'))
+    rename_map = {
+        old: new for old, new in
+        zip(tmp_data_cols, DAY_METRIC_COLS[:len(tmp_data_cols)])
+    }
     return df.rename(rename_map)
 
 def load_ou_file(file_path: str, sheet_config: dict, file_label: str) -> dict:
     wb      = openpyxl.load_workbook(file_path, data_only=True)
     week_dt = extract_week_start(file_path)
-    print(f'\n\U0001f4d7 {os.path.basename(file_path)}  |  Week start: {week_dt}')
+    print(f'\n📗 {os.path.basename(file_path)}  |  Week start: {week_dt}')
     print(f'   Sheets: {wb.sheetnames}')
     result = {}
     for target, (col_s, col_e) in sheet_config.items():
         actual = _resolve_sheet(wb.sheetnames, target)
         if actual is None:
-            print(f'   \u26a0\ufe0f  Sheet not found: "{target}" \u2014 skipped')
+            print(f'   ⚠️  Sheet not found: "{target}" — skipped')
             continue
         df = read_ou_sheet(wb[actual], col_s, col_e).with_columns([
             pl.lit(week_dt).alias('Week'),
@@ -188,46 +218,56 @@ def load_ou_file(file_path: str, sheet_config: dict, file_label: str) -> dict:
             pl.lit(_map_site(actual)).alias('Site'),
         ])
         result[actual] = df
-        print(f'   \u2705 "{actual}" \u2192 {df.shape}')
+        print(f'   ✅ "{actual}" → {df.shape}')
     wb.close()
     return result
 
 # ── Load OU Mail ───────────────────────────────────────────────────────────────
-lc_path = find_latest_file(folder_paths['input_ou_mail'], 'Global OU LC Chat')
+lg_path = find_latest_file(folder_paths['input_ou_mail'], 'Global OU LG Chat')
 nl_path = find_latest_file(folder_paths['input_ou_mail'], 'Global OU NL Chat')
 
-lc_data = load_ou_file(lc_path, LC_SHEET_CONFIG, file_label='Lodging chat')
+lg_data = load_ou_file(lg_path, LG_SHEET_CONFIG, file_label='Lodging chat')
 nl_data = load_ou_file(nl_path, NL_SHEET_CONFIG, file_label='Non-Lodging chat')
 
 # ── Combine & Unpivot ──────────────────────────────────────────────────────────
-all_combined = pl.concat([*lc_data.values(), *nl_data.values()], how='vertical')
+all_combined = pl.concat([*lg_data.values(), *nl_data.values()], how='vertical')
 id_cols  = ['Site', 'LOB', 'Week', 'PST']
 val_cols = [c for c in all_combined.columns if c not in id_cols]
 
 df_long = (
     all_combined
-    .unpivot(index=id_cols, on=val_cols, variable_name='_col', value_name='Value')
+    .unpivot(index=id_cols, on=val_cols,
+             variable_name='_col', value_name='Value')
     .with_columns([
         pl.col('_col').str.split_exact('_', 1).struct.field('field_0').alias('Day'),
         pl.col('_col').str.split_exact('_', 1).struct.field('field_1').alias('OU Status'),
     ])
-    .with_columns(pl.col('Day').replace_strict(DAY_OFFSET, return_dtype=pl.Int32).alias('_offset'))
     .with_columns(
-        (pl.col('Week').cast(pl.Datetime('us')) + pl.duration(days=pl.col('_offset')))
+        pl.col('Day').replace_strict(DAY_OFFSET, return_dtype=pl.Int32).alias('_offset'))
+    .with_columns(
+        (pl.col('Week').cast(pl.Datetime('us')) +
+         pl.duration(days=pl.col('_offset')))
         .dt.date().alias('PST Date')
     )
     .with_columns(
-        pl.concat_str([pl.col('PST Date').cast(pl.String), pl.lit(' '), pl.col('PST')])
+        pl.concat_str([
+            pl.col('PST Date').cast(pl.String), pl.lit(' '), pl.col('PST')
+        ])
         .str.to_datetime('%Y-%m-%d %H:%M').alias('PST Datetime')
     )
 )
 
 for tz, td in TZ_OFFSETS.items():
     us = int(td.total_seconds() * 1_000_000)
-    df_long = df_long.with_columns(
-        (pl.col('PST Datetime') + pl.duration(microseconds=us)).alias(f'{tz} Datetime')
-    ).with_columns(
-        pl.col(f'{tz} Datetime').dt.date().alias(f'{tz} Date')
+    df_long = (
+        df_long
+        .with_columns(
+            (pl.col('PST Datetime') + pl.duration(microseconds=us))
+            .alias(f'{tz} Datetime')
+        )
+        .with_columns(
+            pl.col(f'{tz} Datetime').dt.date().alias(f'{tz} Date')
+        )
     )
 
 df_long = (
@@ -256,39 +296,65 @@ print(f'Columns     : {df_long.columns}')
 display(df_long.head(21))
 
 # ── IC_HCM_Details_Log ─────────────────────────────────────────────────────────
-IEX_Intervals_Input = input_data(folder_paths['iex_intervals_output']).with_columns([
-    pl.col('OracleID').cast(pl.Int64), pl.col('IEX ID').cast(pl.Int64),
-    pl.col('Week_Monday').str.to_date('%Y-%m-%d'),
-    pl.col('Date_Converted').str.to_date('%Y-%m-%d'),
-    pl.col('VNT_Intervals').str.to_datetime('%Y-%m-%d %H:%M:%S'),
-    pl.col('PST_Intervals').str.to_datetime('%Y-%m-%d %H:%M:%S'),
-    pl.col('Datetime_Start_Time').str.to_datetime('%Y-%m-%d %H:%M:%S'),
-    pl.col('Datetime_End_Time').str.to_datetime('%Y-%m-%d %H:%M:%S'),
-    pl.col('Duration').cast(pl.Float64),
-]).filter(pl.col('Date_Converted').dt.year() == 2026)
+IEX_Intervals_Input = (
+    input_data(folder_paths['iex_intervals_output'])
+    .with_columns([
+        pl.col('OracleID').cast(pl.Int64),
+        pl.col('IEX ID').cast(pl.Int64),
+        pl.col('Week_Monday').str.to_date('%Y-%m-%d'),
+        pl.col('Date_Converted').str.to_date('%Y-%m-%d'),
+        pl.col('VNT_Intervals').str.to_datetime('%Y-%m-%d %H:%M:%S'),
+        pl.col('PST_Intervals').str.to_datetime('%Y-%m-%d %H:%M:%S'),
+        pl.col('Datetime_Start_Time').str.to_datetime('%Y-%m-%d %H:%M:%S'),
+        pl.col('Datetime_End_Time').str.to_datetime('%Y-%m-%d %H:%M:%S'),
+        pl.col('Duration').cast(pl.Float64),
+    ])
+    .filter(pl.col('Date_Converted').dt.year() == 2026)
+)
 
-HC_EXTEND_COMBINED = input_data(folder_paths['hc_extend_by_month']).filter(pl.col('Year') == '2026').select([
-    pl.col('Date').str.to_date('%Y-%m-%d'),
-    (pl.col('Month') + '-01').str.to_date('%b-%y-%d').dt.strftime('%y_%m').alias('Month'),
-    pl.col('Email Id'), pl.col('Alias'), pl.col('Designation'),
-    pl.col('Supervisor Name'), pl.col('LOB'), pl.col('Active'), 'Wave',
-])
+HC_EXTEND_COMBINED = (
+    input_data(folder_paths['hc_extend_by_month'])
+    .filter(pl.col('Year') == '2026')
+    .select([
+        pl.col('Date').str.to_date('%Y-%m-%d'),
+        (pl.col('Month') + '-01').str.to_date('%b-%y-%d').dt.strftime('%y_%m').alias('Month'),
+        pl.col('Email Id'), pl.col('Alias'), pl.col('Designation'),
+        pl.col('Supervisor Name'), pl.col('LOB'), pl.col('Active'), 'Wave',
+    ])
+)
 
 IC_HCM_Details_Log = (
     IEX_Intervals_Input
     .join(
         HC_EXTEND_COMBINED.select(['Date', 'Email Id', 'LOB']),
-        left_on=['Date_Converted', 'Email Id'], right_on=['Date', 'Email Id'], how='left',
+        left_on=['Date_Converted', 'Email Id'],
+        right_on=['Date', 'Email Id'],
+        how='left',
     )
-    .with_columns(pl.col('LOB').replace_strict(LOB_MAPPING, default=pl.col('LOB')))
+    .with_columns(
+        pl.col('LOB').replace_strict(LOB_MAPPING, default=pl.col('LOB')))
     .group_by(['LOB', 'VNT_Intervals', 'PST_Intervals']).agg([
-        (pl.col('Duration').filter(pl.col('Scheduled Activity').is_in(['Open Time', 'Extra Hours'])).sum() * 2).alias('Scheduled_Open_Time'),
-        (pl.col('Duration').filter(pl.col('Scheduled Activity').str.contains('Break')).sum()           * 2).alias('Scheduled_Break'),
-        (pl.col('Duration').filter(pl.col('Scheduled Activity').str.contains('Lunch')).sum()           * 2).alias('Scheduled_Lunch'),
-        (pl.col('Duration').filter(pl.col('Scheduled Activity').str.contains('Training|Coaching')).sum()* 2).alias('Scheduled_Training/Coaching'),
-        (pl.col('Duration').filter(pl.col('Scheduled Activity').is_in(LEAVE_LIST)).sum()               * 2).alias('Scheduled_Leave'),
-        (pl.col('Duration').filter(pl.col('Scheduled Activity') == 'No Call/No Show').sum()            * 2).alias('Scheduled_NCNS'),
-        (pl.col('Duration').filter(pl.col('Scheduled Activity') == 'Termination').sum()                * 2).alias('Scheduled_Terminated'),
+        (pl.col('Duration')
+            .filter(pl.col('Scheduled Activity').is_in(['Open Time', 'Extra Hours']))
+            .sum() * 2).alias('Scheduled_Open_Time'),
+        (pl.col('Duration')
+            .filter(pl.col('Scheduled Activity').str.contains('Break'))
+            .sum() * 2).alias('Scheduled_Break'),
+        (pl.col('Duration')
+            .filter(pl.col('Scheduled Activity').str.contains('Lunch'))
+            .sum() * 2).alias('Scheduled_Lunch'),
+        (pl.col('Duration')
+            .filter(pl.col('Scheduled Activity').str.contains('Training|Coaching'))
+            .sum() * 2).alias('Scheduled_Training/Coaching'),
+        (pl.col('Duration')
+            .filter(pl.col('Scheduled Activity').is_in(LEAVE_LIST))
+            .sum() * 2).alias('Scheduled_Leave'),
+        (pl.col('Duration')
+            .filter(pl.col('Scheduled Activity') == 'No Call/No Show')
+            .sum() * 2).alias('Scheduled_NCNS'),
+        (pl.col('Duration')
+            .filter(pl.col('Scheduled Activity') == 'Termination')
+            .sum() * 2).alias('Scheduled_Terminated'),
     ])
     .with_columns([
         pl.col('PST_Intervals').dt.strftime('%Y-%m').alias('PST_Month'),
@@ -307,12 +373,12 @@ IC_HCM_Details_Log = (
         'LOB', 'PST_Month', 'PST_Date', 'PST_Intervals', 'PST_Interval_Range',
         'VNT_Date', 'VNT_Intervals', 'VNT_Interval_Range',
         'Scheduled_Open_Time', 'Scheduled_Break', 'Scheduled_Lunch',
-        'Scheduled_Training/Coaching', 'Scheduled_Leave', 'Scheduled_NCNS',
-        'Scheduled_Terminated',
+        'Scheduled_Training/Coaching', 'Scheduled_Leave',
+        'Scheduled_NCNS', 'Scheduled_Terminated',
     ])
 )
 
-print(f'\u2705 IC_HCM_Details_Log : {IC_HCM_Details_Log.shape}')
+print(f'✅ IC_HCM_Details_Log : {IC_HCM_Details_Log.shape}')
 
 # ── df_hcm_wide (HCM + Global) ────────────────────────────────────────────────
 df_hcm_wide = (
@@ -338,7 +404,9 @@ df_merged = (
     df_hcm_wide
     .join(
         IC_HCM_Details_Log,
-        left_on=['LOB', 'PST Datetime'], right_on=['LOB', 'PST_Intervals'], how='left',
+        left_on=['LOB', 'PST Datetime'],
+        right_on=['LOB', 'PST_Intervals'],
+        how='left',
     )
     .rename({'Req': 'VN_Req', 'Prov': 'VN_Prov', 'Diff': 'VN_Diff'})
     .select([
@@ -348,10 +416,11 @@ df_merged = (
         'VN_Req', 'VN_Prov', 'VN_Diff',
         'Global_Req', 'Global_Prov', 'Global_Diff',
         'Scheduled_Open_Time', 'Scheduled_Break', 'Scheduled_Lunch',
-        'Scheduled_Training/Coaching', 'Scheduled_Leave', 'Scheduled_NCNS',
-        'Scheduled_Terminated',
+        'Scheduled_Training/Coaching', 'Scheduled_Leave',
+        'Scheduled_NCNS', 'Scheduled_Terminated',
     ])
 )
+
 os.makedirs(os.path.dirname(output_ou_details), exist_ok=True)
 df_merged.write_csv(output_ou_details)
 
@@ -361,18 +430,39 @@ print(f'df_merged   : {df_merged.shape}')
 print(f'Columns     : {df_merged.columns}')
 display(df_merged.head(10))
 
-
 # %%
 import json, requests
 import pandas as pd
 from datetime import datetime, timedelta
 
-TEAMS_WEBHOOK_URL = "https://default599e51d62f8c43478e591f795a51a9.8c.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/c24f30c010df45a6a6dac9421643bb34/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=5vWDl18a7-IWSvHuZAWgGtQcwM54nEapSArj4JVPnGg"
+TEAMS_WEBHOOK_URL = "https://default599e51d62f8c43478e591f795a51a9.8c.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/d9dfae822f4941d0be070dd295d55658/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=zQ76qlawVl-CtgQ1Okym9_Vz4rdbSAa0Mc7VHESH3N4"
 LOB_RENAME   = {"Lodging chat": "LG Chat", "Non-Lodging chat": "NL Chat"}
 LOB_STYLE_OU = {"LG Chat": ("#1565C0","#ffffff"), "NL Chat": ("#6A1B9A","#ffffff")}
 IV_STYLE     = {"LG Chat": ("#1E88E5","#ffffff","#64B5F6"),
                 "NL Chat": ("#8E24AA","#ffffff","#BA68C8")}
+def send_banner():
+    ts   = (datetime.utcnow() + timedelta(hours=7)).strftime("%d-%b-%Y  %I:%M %p (VNT)")
+    html = (
+        '<table cellpadding="0" cellspacing="0" border="0" '
+        'style="border-collapse:collapse;width:100%;border-left:5px solid #4A148C;">'
+        '<tr>'
+        '<td width="5" bgcolor="#4A148C" style="width:5px;">&nbsp;</td>'
+        '<td style="padding:8px 14px;">'
+        '<span style="font-size:18px;">📈</span>&nbsp;'
+        '<b style="color:#4A148C;font-size:16px;">OU Present Report</b><br>'
+        '<span style="font-size:11px;opacity:0.75;">'
+        f'⏱ <b>{ts}</b>&nbsp;&nbsp;|&nbsp;&nbsp;'
+        'Occupancy &amp; staffing overview — Current interval'
+        '</span></td></tr></table>'
+    )
+    try:
+        r = requests.post(TEAMS_WEBHOOK_URL, headers={"Content-Type": "application/json"},
+                          data=json.dumps({"html": html}), timeout=30)
+        print(f"[BANNER] Sent" if r.status_code in (200, 202) else f"[BANNER] Failed [{r.status_code}]")
+    except Exception as e:
+        print(f"[BANNER] Error: {e}")
 
+now_vnt = datetime.utcnow() + timedelta(hours=7)
 now_vnt = datetime.utcnow() + timedelta(hours=7)
 min_f   = (now_vnt.minute // 30) * 30
 cur_vnt = now_vnt.replace(minute=min_f, second=0, microsecond=0)
@@ -551,6 +641,7 @@ def send_ou_webhook(df, title, cases=0, summary=''):
     except Exception as e:
         print(f"❌ {e}")
 
+send_banner()
 win_label = f"{cur_vnt.strftime('%d-%b %H:%M')} → {(cur_vnt + timedelta(minutes=30*7)).strftime('%H:%M')} (VNT)"
 send_ou_webhook(df_t1, "OU — VN Staffing Overview",    cases=len(df_t1), summary=win_label)
 send_ou_webhook(df_t2, "OU — Surplus / Deficit Heads", cases=len(df_t2), summary=win_label)

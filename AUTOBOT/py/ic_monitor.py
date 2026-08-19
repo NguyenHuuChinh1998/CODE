@@ -73,7 +73,27 @@ CONNECT_STATE_STYLE = {
     "LOGIN":        ("#FFF8E1","#F57F17"), "PERSONAL":     ("#FBE9E7","#BF360C"),
 }
 
-
+def send_banner():
+    ts   = datetime.now().strftime("%d-%b-%Y  %I:%M %p (VNT)")
+    html = (
+        '<table cellpadding="0" cellspacing="0" border="0" '
+        'style="border-collapse:collapse;width:100%;border-left:5px solid #1B5E20;">'
+        '<tr>'
+        '<td width="5" bgcolor="#1B5E20" style="width:5px;">&nbsp;</td>'
+        '<td style="padding:8px 14px;">'
+        '<span style="font-size:18px;">📊</span>&nbsp;'
+        '<b style="color:#1B5E20;font-size:16px;">IC Monitor Report</b><br>'
+        '<span style="font-size:11px;opacity:0.75;">'
+        f'⏱ <b>{ts}</b>&nbsp;&nbsp;|&nbsp;&nbsp;'
+        'Intraday contact center monitoring — All sites'
+        '</span></td></tr></table>'
+    )
+    try:
+        r = requests.post(TEAMS_WEBHOOK_URL, headers={"Content-Type": "application/json"},
+                          data=json.dumps({"html": html}), timeout=30)
+        print(f"[BANNER] Sent" if r.status_code in (200, 202) else f"[BANNER] Failed [{r.status_code}]")
+    except Exception as e:
+        print(f"[BANNER] Error: {e}")
 
 # %%
 def convert_to_datetime(st):
@@ -299,6 +319,21 @@ def build_schedule_mismatch(outage_snap, intervals_df, pst_now):
         ) |
         ((pl.col("Connect State") == "BREAK") & (pl.col("Scheduled Activity") == "Break")) |
         ((pl.col("Connect State") == "LUNCH") & (pl.col("Scheduled Activity") == "Lunch")) |
+        # Training state + any scheduled activity containing "Training" = compliant
+        (
+            (pl.col("Connect State") == "TRAINING") &
+            pl.col("Scheduled Activity").fill_null("").str.to_uppercase().str.contains("TRAINING")
+        ) |
+        # Team Meeting state + Team Meeting scheduled = compliant
+        (
+            (pl.col("Connect State") == "TEAM MEETING") &
+            pl.col("Scheduled Activity").fill_null("").str.to_uppercase().str.contains("TEAM MEETING")
+        ) |
+        # Coaching state + Coaching scheduled = compliant
+        (
+            (pl.col("Connect State") == "COACHING") &
+            pl.col("Scheduled Activity").fill_null("").str.to_uppercase().str.contains("COACHING")
+        ) |
         pl.col("Scheduled Activity").is_null()
     )
 
@@ -327,6 +362,13 @@ def build_schedule_mismatch(outage_snap, intervals_df, pst_now):
             note = 'Missing Break'
         elif state in ['AVAILABLE', 'READY'] and sched == 'Lunch':
             note = 'Missing Lunch'
+        # Guard: state and schedule are the same category → should not be mismatch
+        elif 'TRAINING' in state.upper() and 'TRAINING' in sched.upper():
+            note = 'On Schedule (Training)'
+        elif 'TEAM MEETING' in state.upper() and 'TEAM MEETING' in sched.upper():
+            note = 'On Schedule (Meeting)'
+        elif 'COACHING' in state.upper() and 'COACHING' in sched.upper():
+            note = 'On Schedule (Coaching)'
         else:
             note = f'Wrong Time ({sched})'
 
@@ -379,6 +421,7 @@ def attach_ucp_intervals(df, lob):
     return df.with_columns([pl.Series("PST", pst_list), pl.lit(lob).alias("LOB")])
 
 def get_ucp_req_heads():
+    """Returns {(LOB, Location): {'req': int, 'sup': float, 'mov': float}} for current PST interval."""
     try:
         wb    = openpyxl.load_workbook(UCP_FILE, data_only=True)
         df_lg = attach_ucp_intervals(read_ucp_range(wb, "LG Chat"), "LG Chat")
@@ -403,12 +446,13 @@ def get_ucp_req_heads():
             lob = row["LOB"]
             for col, loc_code in SITE_COL_MAP.items():
                 if col in row and row[col] is not None:
-                    try: result[(lob, loc_code)] = int(float(str(row[col]).replace(",","")))
-                    except: pass
+                    try: req = int(float(str(row[col]).replace(",", "")))
+                    except: req = 0
+                    result[(lob, loc_code)] = {'req': req, 'sup': 0.0, 'mov': 0.0}
         return result
 
     except Exception as e:
-        print(f"❌ UCP load error: {e}"); return {}
+        print(f"❌ UCP error: {e}"); return {}
 
 def input_data(data_dir):
     files = []
@@ -575,13 +619,13 @@ def build_html_table(df, title, is_global=False, cases=0, summary=''):
                 except: cells.append(tdp(rbg,v))
             elif j==req_heads_idx:
                 cells.append(tdb('#1e3a5f','#ffffff',v,'center'))
-            elif j==heads_def_idx:
+            elif j == heads_def_idx:
                 try:
-                    n=float(v.replace(',',''))
-                    bg='#1B5E20' if n>=0 else '#B71C1C'
-                    display=f"+{int(n)}" if n>=0 else str(int(n))
-                    cells.append(tdb(bg,'#ffffff',display,'center'))
-                except: cells.append(tdp(rbg,v))
+                    n = float(v.replace(',',''))
+                    bg = '#1B5E20' if n >= 0 else '#B71C1C'
+                    display = f"+{int(n)}" if n > 0 else str(int(n))
+                    cells.append(tdb(bg, '#ffffff', display, 'center'))
+                except: cells.append(tdp(rbg, v))
             elif j==status_idx:
                 s=STATUS_STYLE.get(v,{'bg':rbg,'fg':'#1a1a1a'}); cells.append(tdb(s['bg'],s['fg'],v,'center'))
             elif j == sched_for_idx:
@@ -644,6 +688,8 @@ def send_html_via_webhook(df, title, is_global=False, cases=0, summary='', chunk
 
 # %%
 # ── Load data ─────────────────────────────────────────────────
+send_banner()
+
 outage_db=input_data(DATA_DIR)
 if outage_db.is_empty(): raise RuntimeError("❌ No data loaded")
 outage_db=outage_db.sort(["Export time"]).filter(pl.col("Export time")==pl.col("Export time").max())
@@ -703,12 +749,25 @@ ct_pd,  ct_n = process_outage(ct_out,  B)
 pivot_pd = pivot_g.to_pandas()
 
 # ── Merge UCP Req Heads ───────────────────────────────────────
-req_heads = get_ucp_req_heads()
-if req_heads:
+req_data = get_ucp_req_heads()
+if req_data:
     pivot_pd["Req Heads [UCP]"] = pivot_pd.apply(
-    lambda r: req_heads.get((r["LOB"], r["Location"]), 0), axis=1).astype(int)
-    pivot_pd["Heads Deficit"] = pivot_pd["Available"] - pivot_pd["Req Heads [UCP]"]
-    print(f"✅ UCP merged: {req_heads}")
+        lambda r: req_data.get((r["LOB"], r["Location"]), {}).get('req', 0), axis=1
+    ).astype(int)
+    pivot_pd["Support [UCP]"] = pivot_pd.apply(
+        lambda r: float(req_data.get((r["LOB"], r["Location"]), {}).get('sup', 0) or 0), axis=1
+    )
+    pivot_pd["Movement [UCP]"] = pivot_pd.apply(
+        lambda r: float(req_data.get((r["LOB"], r["Location"]), {}).get('mov', 0) or 0), axis=1
+    )
+    # Heads Deficit = Req Heads - Available - Support + Movement
+    pivot_pd["Heads Deficit"] = (
+        pivot_pd["Available"]
+        + pivot_pd["Support [UCP]"]
+        - pivot_pd["Movement [UCP]"]
+        - pivot_pd["Req Heads [UCP]"]
+    ).round(1)
+    print(f"✅ UCP merged: {req_data}")
 else:
     print("⚠️ UCP not available — pivot sent without Req Heads")
 

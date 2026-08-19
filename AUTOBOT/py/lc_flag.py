@@ -4,7 +4,7 @@ import pandas as pd
 import polars as pl
 from datetime import datetime, timedelta
 
-TEAMS_WEBHOOK_URL = "https://default599e51d62f8c43478e591f795a51a9.8c.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/c24f30c010df45a6a6dac9421643bb34/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=5vWDl18a7-IWSvHuZAWgGtQcwM54nEapSArj4JVPnGg"
+TEAMS_WEBHOOK_URL = "https://default599e51d62f8c43478e591f795a51a9.8c.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/8a7e8a2d23674e2797e45eb2d9b42941/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=w1-Grzliw76VIaSnhS2VkBrnFzl2tdev6Brm1KdeWeM"
 DATA_DIR = r"C:\Users\huuchinh.nguyen\Concentrix Corporation\WFM-Expedia-HCM - Branding files\Rawdata\CAPTURE\lc_rawdata_in_console"
 
 LOB_MAP = {
@@ -22,6 +22,28 @@ LOB_STYLE = {
     "LG Chat":  {"bg":"#1565C0","fg":"#ffffff"}, "NL Chat":  {"bg":"#2E7D32","fg":"#ffffff"},
     "LG Voice": {"bg":"#4A148C","fg":"#ffffff"}, "NL Voice": {"bg":"#BF360C","fg":"#ffffff"},
 }
+
+def send_banner():
+    ts   = datetime.now().strftime("%d-%b-%Y  %I:%M %p (VNT)")
+    html = (
+        '<table cellpadding="0" cellspacing="0" border="0" '
+        'style="border-collapse:collapse;width:100%;border-left:5px solid #E65100;">'
+        '<tr>'
+        '<td width="5" bgcolor="#E65100" style="width:5px;">&nbsp;</td>'
+        '<td style="padding:8px 14px;">'
+        '<span style="font-size:18px;">🚩</span>&nbsp;'
+        '<b style="color:#E65100;font-size:16px;">Long Chat Flag Report</b><br>'
+        '<span style="font-size:11px;opacity:0.75;">'
+        f'⏱ <b>{ts}</b>&nbsp;&nbsp;|&nbsp;&nbsp;'
+        'Agents with long-running chat sessions'
+        '</span></td></tr></table>'
+    )
+    try:
+        r = requests.post(TEAMS_WEBHOOK_URL, headers={"Content-Type": "application/json"},
+                          data=json.dumps({"html": html}), timeout=30)
+        print(f"[BANNER] Sent" if r.status_code in (200, 202) else f"[BANNER] Failed [{r.status_code}]")
+    except Exception as e:
+        print(f"[BANNER] Error: {e}")
 
 # %%
 def convert_to_datetime(st):
@@ -193,6 +215,8 @@ global_nlv_pd = global_nlv_processed.to_pandas()
 print(f"VN: {LC_Cases_hcm} | LG Chat: {LC_Cases_global_lg} | NL Chat: {LC_Cases_global_nl} | LG Voice: {LV_Cases_global_lg} | NL Voice: {LV_Cases_global_nl}")
 
 # %%
+send_banner()
+
 send_html_via_webhook(hcm_lc_pd,     "Long Chat Report for VN",                  is_global=False, lc_cases=LC_Cases_hcm)
 # send_html_via_webhook(global_lg_pd,  "Lodging Long Chat Report for Global",      is_global=True,  lc_cases=LC_Cases_global_lg)
 # send_html_via_webhook(global_nl_pd,  "Non-Lodging Long Chat Report for Global",  is_global=True,  lc_cases=LC_Cases_global_nl)

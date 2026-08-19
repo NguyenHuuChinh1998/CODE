@@ -4,7 +4,7 @@ import pandas as pd
 import polars as pl
 from datetime import datetime, timedelta, time as dtime
 
-TEAMS_WEBHOOK_URL = "https://default599e51d62f8c43478e591f795a51a9.8c.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/c24f30c010df45a6a6dac9421643bb34/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=5vWDl18a7-IWSvHuZAWgGtQcwM54nEapSArj4JVPnGg"
+TEAMS_WEBHOOK_URL = "https://default599e51d62f8c43478e591f795a51a9.8c.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/9a0c69e381f14f4982f90ac4a6080716/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=jhEVLUy_7eIsgGFN1xf5dY6uPXbdqXqCmw_ZzUELByA"
 
 DATA_DIR      = r"C:\Users\huuchinh.nguyen\Concentrix Corporation\WFM-Expedia-HCM - Branding files\Rawdata\CAPTURE\current_agent"
 SCHEDULE_FILE = r"C:\Users\huuchinh.nguyen\Concentrix Corporation\WFM-Expedia-HCM - Branding files\Schedule\Schedule (Ops version)\2026\Master_Schedule_Merged.xlsx"
@@ -71,6 +71,30 @@ EXCLUDE_ORACLE_IDS = {
     '103060459',
 }
 
+MAX_ROWS_PER_SEND = 15
+
+def send_banner():
+    ts   = datetime.now().strftime("%d-%b-%Y  %I:%M %p (VNT)")
+    html = (
+        '<table cellpadding="0" cellspacing="0" border="0" '
+        'style="border-collapse:collapse;width:100%;border-left:5px solid #1565C0;">'
+        '<tr>'
+        '<td width="5" bgcolor="#1565C0" style="width:5px;">&nbsp;</td>'
+        '<td style="padding:8px 14px;">'
+        '<span style="font-size:18px;">📋</span>&nbsp;'
+        '<b style="color:#1565C0;font-size:16px;">Attendance Report</b><br>'
+        '<span style="font-size:11px;opacity:0.75;">'
+        f'⏱ <b>{ts}</b>&nbsp;&nbsp;|&nbsp;&nbsp;'
+        'Real-time attendance tracking — VN HCM agents'
+        '</span></td></tr></table>'
+    )
+    try:
+        r = requests.post(TEAMS_WEBHOOK_URL, headers={"Content-Type": "application/json"},
+                          data=json.dumps({"html": html}), timeout=30)
+        print(f"[BANNER] Sent" if r.status_code in (200, 202) else f"[BANNER] Failed [{r.status_code}]")
+    except Exception as e:
+        print(f"[BANNER] Error: {e}")
+
 # %%
 def convert_to_datetime(st):
     return datetime(*st[:6])
@@ -117,7 +141,7 @@ def should_include(row, today, yesterday, now_dt):
     start_dt=row['Shift_Start_DT']
     if start_dt is None: return False
     if row['Sched_Date']==today: return start_dt<=now_dt
-    elif row['Sched_Date']==yesterday:
+    elif yesterday is not None and row['Sched_Date']==yesterday:
         if not is_overnight(shift): return False
         try:
             e=shift.strip().split('-')[1]
@@ -271,22 +295,85 @@ def build_html_table(df, title, is_global=False, cases=0, summary=''):
             f'style="border-collapse:collapse;font-size:12px;font-family:Segoe UI,Arial,sans-serif;">\n'
             f'  <thead><tr>{"".join(hdrs)}</tr></thead>\n  <tbody>{rows_html}</tbody>\n</table>\n</div>')
 
-def send_html_via_webhook(df, title, is_global=False, cases=0, summary=''):
-    if df is None or (hasattr(df,'empty') and df.empty):
-        print(f"⏭️  Skipping '{title}'"); return
-    payload={'html':build_html_table(df,title,is_global,cases,summary)}
-    try:
-        r=requests.post(TEAMS_WEBHOOK_URL,headers={'Content-Type':'application/json'},
-                        data=json.dumps(payload),timeout=30)
-        print(f"✅ Sent: '{title}'" if r.status_code in (200,202) else f"❌ Failed [{r.status_code}]: {r.text[:200]}")
-    except Exception as e:
-        print(f"❌ {e}")
+def send_html_via_webhook(df, title, is_global=False, cases=0, summary='',
+                          max_rows=MAX_ROWS_PER_SEND):
+    if df is None or (hasattr(df, 'empty') and df.empty):
+        print(f"[SKIP] '{title}' — empty dataframe")
+        return
+
+    total = len(df)
+
+    # ── Single send: rows within limit ────────────────────────
+    if total <= max_rows:
+        payload = {
+            'html': build_html_table(df, title, is_global, cases, summary)
+        }
+        try:
+            r = requests.post(
+                TEAMS_WEBHOOK_URL,
+                headers={'Content-Type': 'application/json'},
+                data=json.dumps(payload),
+                timeout=30
+            )
+            if r.status_code in (200, 202):
+                print(f"[OK] Sent: '{title}' | {total} rows")
+            else:
+                print(f"[FAIL] '{title}' | status={r.status_code} | {r.text[:200]}")
+        except Exception as e:
+            print(f"[ERROR] '{title}': {e}")
+        return
+
+    # ── Split send: rows exceed limit ──────────────────────────
+    chunks  = [df.iloc[i:i + max_rows] for i in range(0, total, max_rows)]
+    n_parts = len(chunks)
+    print(f"[SPLIT] '{title}' — {total} rows -> {n_parts} parts "
+          f"(max {max_rows} rows/msg)")
+
+    for idx, chunk in enumerate(chunks, 1):
+        part_title   = f"{title} ({idx}/{n_parts})"
+        # Summary and cases only on part 1 to avoid duplicate stats
+        part_summary = summary if idx == 1 else ''
+        part_cases   = cases  if idx == 1 else len(chunk)
+
+        payload = {
+            'html': build_html_table(
+                chunk.reset_index(drop=True),
+                part_title,
+                is_global,
+                part_cases,
+                part_summary
+            )
+        }
+        try:
+            r = requests.post(
+                TEAMS_WEBHOOK_URL,
+                headers={'Content-Type': 'application/json'},
+                data=json.dumps(payload),
+                timeout=30
+            )
+            if r.status_code in (200, 202):
+                print(f"  [OK] Part {idx}/{n_parts}: '{part_title}' | {len(chunk)} rows")
+            else:
+                print(f"  [FAIL] Part {idx}/{n_parts}: status={r.status_code} | "
+                      f"{r.text[:200]}")
+        except Exception as e:
+            print(f"  [ERROR] Part {idx}/{n_parts}: '{part_title}': {e}")
+
+        # Small delay between parts to avoid webhook rate limiting
+        if idx < n_parts:
+            time.sleep(1.5)
 
 # %%
 # ── Time context ──────────────────────────────────────────────
-now_dt    = datetime.now()
-today     = (now_dt-timedelta(days=1)).date() if now_dt.hour<5 else now_dt.date()
-yesterday = today-timedelta(days=1)
+send_banner()
+
+now_dt = datetime.now()
+if now_dt.hour >= 5:
+    today     = now_dt.date()
+    yesterday = None
+else:
+    today     = (now_dt - timedelta(days=1)).date()
+    yesterday = today - timedelta(days=1)
 
 # ── Load all snapshots ────────────────────────────────────────
 raw_all=input_data_all_raw(DATA_DIR)
@@ -371,7 +458,7 @@ if oracle_col:
 else:
     print("⚠️ OracleID column not found — skipping exclusion")
 
-keep_dates=[str(d) for d in [yesterday,today] if str(d) in col_map.values()]
+keep_dates=[str(d) for d in [yesterday,today] if d is not None and str(d) in col_map.values()]
 print(f"✅ Schedule dates: {keep_dates}")
 
 email_col="Email"; name_col="Employee Name" if "Employee Name" in sched_raw.columns else None
