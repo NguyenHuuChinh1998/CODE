@@ -151,7 +151,7 @@ DST_UCP          = os.path.join(BASE_CAPTURE, "EN- UCP.xlsx")
 LOGIN_VERIFY_CSS = "button.settingsButton"
 LOGIN_TIMEOUT    = 20
 CNX_USER         = "huuchinh.nguyen@concentrix.com"
-CNX_PASS         = "Vuthihongtham@130499"
+CNX_PASS         = "Concentrix@130499"
 
 
 def _ts():
