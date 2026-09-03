@@ -5,6 +5,8 @@ import sys
 from datetime import datetime
 from openpyxl import Workbook, load_workbook
 
+# subprocess.run(["shutdown", "/s", "/t", "0"])
+
 if hasattr(sys.stdout, 'buffer'):
     try:
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')

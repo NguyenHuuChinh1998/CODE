@@ -7,7 +7,6 @@ import requests
 import json
 from datetime import datetime, timedelta
 
-# subprocess.run(["shutdown", "/s", "/t", "0"])
 CREATE_NO_WINDOW = 0x08000000
 
 PROFILE_PATH    = r"C:/temp/new_chrome_profile"
@@ -25,28 +24,64 @@ RUN_ORDER = [
     "ou_present.py",
     "ic_summary.py"
 ]
+DOWNLOAD_SCRIPT = "download_test.py"
+PS_TIMEOUT      = 15
+
+
+def _run_ps(cmd, timeout=PS_TIMEOUT):
+    try:
+        return subprocess.run(
+            ["powershell", "-NoProfile", "-Command", cmd],
+            capture_output=True, text=True,
+            timeout=timeout
+        )
+    except subprocess.TimeoutExpired:
+        print(f"  ⚠️ PowerShell command timed out after {timeout}s — skipping")
+        return None
+    except Exception as e:
+        print(f"  ⚠️ PowerShell error: {e}")
+        return None
+
+
+def kill_self_previous():
+    """Kill any previously hung running_bot process to allow clean restart."""
+    current_pid = os.getpid()
+    cmd = (
+        f"Get-CimInstance Win32_Process -Filter \"name='python.exe'\" | "
+        f"Where-Object {{ $_.CommandLine -like '*running_bot*' "
+        f"-and $_.ProcessId -ne {current_pid} }} | "
+        f"ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"
+    )
+    r = _run_ps(cmd)
+    if r and r.returncode == 0:
+        print("  ✅ Killed previous hung running_bot instance")
+    else:
+        print("  ℹ️  No previous running_bot found")
+
 
 def kill_orphan_chromedriver(profile_keyword=PROFILE_KEYWORD):
     try:
-        r1 = subprocess.run(["taskkill", "/F", "/IM", "chromedriver.exe"],
-                            capture_output=True, text=True)
+        r1 = subprocess.run(
+            ["taskkill", "/F", "/IM", "chromedriver.exe"],
+            capture_output=True, text=True,
+            timeout=10
+        )
         print("✅ Killed chromedriver" if "SUCCESS" in r1.stdout
               else "ℹ️  No chromedriver found")
+    except subprocess.TimeoutExpired:
+        print("⚠️ taskkill chromedriver timed out")
     except Exception as e:
         print(f"⚠️ chromedriver: {e}")
 
-    try:
-        ps_cmd = (
-            f"Get-WmiObject Win32_Process -Filter \"name='chrome.exe'\" | "
-            f"Where-Object {{ $_.CommandLine -like '*{profile_keyword}*' }} | "
-            f"ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"
-        )
-        r2 = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd],
-                            capture_output=True, text=True)
+    cmd = (
+        f"Get-CimInstance Win32_Process -Filter \"name='chrome.exe'\" | "
+        f"Where-Object {{ $_.CommandLine -like '*{profile_keyword}*' }} | "
+        f"ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"
+    )
+    r2 = _run_ps(cmd)
+    if r2:
         print(f"✅ Killed bot Chrome ({profile_keyword})" if r2.returncode == 0
               else "ℹ️  No bot Chrome found")
-    except Exception as e:
-        print(f"⚠️ Chrome: {e}")
 
     lock_files = [
         os.path.join(PROFILE_PATH, "SingletonLock"),
@@ -63,27 +98,25 @@ def kill_orphan_chromedriver(profile_keyword=PROFILE_KEYWORD):
         except Exception as e:
             print(f"  ⚠️ Could not remove {os.path.basename(lf)}: {e}")
 
-    time.sleep(3)
+    time.sleep(2)
 
 
 def kill_orphan_bots(scripts=None):
     if scripts is None:
         scripts = RUN_ORDER
     for script in scripts:
-        try:
-            ps_cmd = (
-                f"Get-WmiObject Win32_Process -Filter \"name='python.exe'\" | "
-                f"Where-Object {{ $_.CommandLine -like '*{script}*' }} | "
-                f"ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"
-            )
-            r = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd],
-                               capture_output=True, text=True)
-            if "successfully" in r.stdout.lower():
-                print(f"  ✅ Killed hanging: {script}")
-            else:
-                print(f"  ℹ️  No hanging process: {script}")
-        except Exception as e:
-            print(f"  ⚠️ {script}: {e}")
+        cmd = (
+            f"Get-CimInstance Win32_Process -Filter \"name='python.exe'\" | "
+            f"Where-Object {{ $_.CommandLine -like '*{script}*' }} | "
+            f"ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"
+        )
+        r = _run_ps(cmd)
+        if r is None:
+            print(f"  ⚠️ Timeout checking: {script}")
+        elif "successfully" in (r.stdout or "").lower():
+            print(f"  ✅ Killed hanging: {script}")
+        else:
+            print(f"  ℹ️  No hanging process: {script}")
 
 
 def send_warning_webhook(msg, cooldown_minutes=25):
@@ -94,7 +127,8 @@ def send_warning_webhook(msg, cooldown_minutes=25):
             if (now - last).total_seconds() < cooldown_minutes * 60:
                 print(f"⏭️  Alert suppressed (cooldown {cooldown_minutes}min)")
                 return
-        except: pass
+        except:
+            pass
 
     payload = {"html": (
         f'<p><b style="color:#c0392b;font-size:16px;">⚠️ BOT DOWNLOAD ALERT</b><br>'
@@ -110,8 +144,8 @@ def send_warning_webhook(msg, cooldown_minutes=25):
     except Exception as e:
         print(f"⚠️ Webhook failed: {e}")
 
-def check_download_success(start_time):
 
+def check_download_success(start_time):
     CHECK_DIRS = {
         "current_interval": os.path.join(BASE_CAPTURE, "current_interval"),
         "current_agent"   : os.path.join(BASE_CAPTURE, "current_agent"),
@@ -145,6 +179,7 @@ print(f"🚀 AUTOBOT started: {bot_start.strftime('%d-%b-%Y %H:%M:%S')}")
 print(f"{'═'*55}")
 
 print("\n🧹 Cleaning up orphaned processes...")
+kill_self_previous()
 kill_orphan_bots()
 kill_orphan_chromedriver()
 
@@ -157,15 +192,14 @@ for script in RUN_ORDER:
     t0    = time.time()
     ts    = datetime.now().strftime("%H:%M:%S")
 
-    if not download_ok and script != "download.py":
+    if not download_ok and script != DOWNLOAD_SCRIPT:
         print(f"\n⏭️  [{ts}] Skipping {script} — download failed")
         results.append((label, 0.0, "⏭️ SKIPPED"))
         continue
 
     print(f"\n▶  [{ts}] Running: {script}")
     print(f"{'─'*55}")
-    
-    #send_report_header(script)
+
     download_start = datetime.now()
 
     try:
@@ -189,7 +223,7 @@ for script in RUN_ORDER:
         elapsed = round(time.time() - t0, 1)
         status  = f"❌ ERROR: {e}"
 
-    if script == "download.py":
+    if script == DOWNLOAD_SCRIPT:
         print(f"\n🔍 Verifying files moved after {download_start.strftime('%H:%M:%S')}...")
         missing = check_download_success(start_time=download_start)
         if missing:
