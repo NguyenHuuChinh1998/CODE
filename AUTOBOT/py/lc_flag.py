@@ -23,27 +23,27 @@ LOB_STYLE = {
     "LG Voice": {"bg":"#4A148C","fg":"#ffffff"}, "NL Voice": {"bg":"#BF360C","fg":"#ffffff"},
 }
 
-def send_banner():
-    ts   = datetime.now().strftime("%d-%b-%Y  %I:%M %p (VNT)")
-    html = (
-        '<table cellpadding="0" cellspacing="0" border="0" '
-        'style="border-collapse:collapse;width:100%;border-left:5px solid #E65100;">'
-        '<tr>'
-        '<td width="5" bgcolor="#E65100" style="width:5px;">&nbsp;</td>'
-        '<td style="padding:8px 14px;">'
-        '<span style="font-size:18px;">🚩</span>&nbsp;'
-        '<b style="color:#E65100;font-size:16px;">Long Chat Flag Report</b><br>'
-        '<span style="font-size:11px;opacity:0.75;">'
-        f'⏱ <b>{ts}</b>&nbsp;&nbsp;|&nbsp;&nbsp;'
-        'Agents with long-running chat sessions'
-        '</span></td></tr></table>'
-    )
-    try:
-        r = requests.post(TEAMS_WEBHOOK_URL, headers={"Content-Type": "application/json"},
-                          data=json.dumps({"html": html}), timeout=30)
-        print(f"[BANNER] Sent" if r.status_code in (200, 202) else f"[BANNER] Failed [{r.status_code}]")
-    except Exception as e:
-        print(f"[BANNER] Error: {e}")
+# def send_banner():
+#     ts   = datetime.now().strftime("%d-%b-%Y  %I:%M %p (VNT)")
+#     html = (
+#         '<table cellpadding="0" cellspacing="0" border="0" '
+#         'style="border-collapse:collapse;width:100%;border-left:5px solid #E65100;">'
+#         '<tr>'
+#         '<td width="5" bgcolor="#E65100" style="width:5px;">&nbsp;</td>'
+#         '<td style="padding:8px 14px;">'
+#         '<span style="font-size:18px;">🚩</span>&nbsp;'
+#         '<b style="color:#E65100;font-size:16px;">Long Chat Flag Report</b><br>'
+#         '<span style="font-size:11px;opacity:0.75;">'
+#         f'⏱ <b>{ts}</b>&nbsp;&nbsp;|&nbsp;&nbsp;'
+#         'Agents with long-running chat sessions'
+#         '</span></td></tr></table>'
+#     )
+#     try:
+#         r = requests.post(TEAMS_WEBHOOK_URL, headers={"Content-Type": "application/json"},
+#                           data=json.dumps({"html": html}), timeout=30)
+#         print(f"[BANNER] Sent" if r.status_code in (200, 202) else f"[BANNER] Failed [{r.status_code}]")
+#     except Exception as e:
+#         print(f"[BANNER] Error: {e}")
 
 # %%
 def convert_to_datetime(st):
@@ -215,7 +215,7 @@ global_nlv_pd = global_nlv_processed.to_pandas()
 print(f"VN: {LC_Cases_hcm} | LG Chat: {LC_Cases_global_lg} | NL Chat: {LC_Cases_global_nl} | LG Voice: {LV_Cases_global_lg} | NL Voice: {LV_Cases_global_nl}")
 
 # %%
-send_banner()
+# send_banner()
 
 send_html_via_webhook(hcm_lc_pd,     "Long Chat Report for VN",                  is_global=False, lc_cases=LC_Cases_hcm)
 # send_html_via_webhook(global_lg_pd,  "Lodging Long Chat Report for Global",      is_global=True,  lc_cases=LC_Cases_global_lg)

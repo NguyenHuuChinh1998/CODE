@@ -641,7 +641,7 @@ def send_ou_webhook(df, title, cases=0, summary=''):
     except Exception as e:
         print(f"❌ {e}")
 
-send_banner()
+# send_banner()
 win_label = f"{cur_vnt.strftime('%d-%b %H:%M')} → {(cur_vnt + timedelta(minutes=30*7)).strftime('%H:%M')} (VNT)"
 send_ou_webhook(df_t1, "OU — VN Staffing Overview",    cases=len(df_t1), summary=win_label)
 send_ou_webhook(df_t2, "OU — Surplus / Deficit Heads", cases=len(df_t2), summary=win_label)
