@@ -436,43 +436,23 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 TEAMS_WEBHOOK_URL = "https://default599e51d62f8c43478e591f795a51a9.8c.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/d9dfae822f4941d0be070dd295d55658/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=zQ76qlawVl-CtgQ1Okym9_Vz4rdbSAa0Mc7VHESH3N4"
+
 LOB_RENAME   = {"Lodging chat": "LG Chat", "Non-Lodging chat": "NL Chat"}
 LOB_STYLE_OU = {"LG Chat": ("#1565C0","#ffffff"), "NL Chat": ("#6A1B9A","#ffffff")}
 IV_STYLE     = {"LG Chat": ("#1E88E5","#ffffff","#64B5F6"),
                 "NL Chat": ("#8E24AA","#ffffff","#BA68C8")}
-def send_banner():
-    ts   = (datetime.utcnow() + timedelta(hours=7)).strftime("%d-%b-%Y  %I:%M %p (VNT)")
-    html = (
-        '<table cellpadding="0" cellspacing="0" border="0" '
-        'style="border-collapse:collapse;width:100%;border-left:5px solid #4A148C;">'
-        '<tr>'
-        '<td width="5" bgcolor="#4A148C" style="width:5px;">&nbsp;</td>'
-        '<td style="padding:8px 14px;">'
-        '<span style="font-size:18px;">📈</span>&nbsp;'
-        '<b style="color:#4A148C;font-size:16px;">OU Present Report</b><br>'
-        '<span style="font-size:11px;opacity:0.75;">'
-        f'⏱ <b>{ts}</b>&nbsp;&nbsp;|&nbsp;&nbsp;'
-        'Occupancy &amp; staffing overview — Current interval'
-        '</span></td></tr></table>'
-    )
-    try:
-        r = requests.post(TEAMS_WEBHOOK_URL, headers={"Content-Type": "application/json"},
-                          data=json.dumps({"html": html}), timeout=30)
-        print(f"[BANNER] Sent" if r.status_code in (200, 202) else f"[BANNER] Failed [{r.status_code}]")
-    except Exception as e:
-        print(f"[BANNER] Error: {e}")
-
 now_vnt = datetime.utcnow() + timedelta(hours=7)
 now_vnt = datetime.utcnow() + timedelta(hours=7)
 min_f   = (now_vnt.minute // 30) * 30
 cur_vnt = now_vnt.replace(minute=min_f, second=0, microsecond=0)
+cur_pst = cur_vnt - timedelta(hours=15)   # PST = VNT - 15h
 
 df_base = (
     df_merged
     .with_columns(pl.col("LOB").replace(LOB_RENAME))
     .rename({"VNT_Intervals": "VN Intervals", "PST Datetime": "Pacific Intervals"})
-    .filter(pl.col("VN Intervals") >= cur_vnt)
-    .sort(["LOB", "VN Intervals"])
+    .filter(pl.col("Pacific Intervals") >= cur_pst)  # dùng PST thay VNT_Intervals (có thể NULL khi tuần mới)
+    .sort(["LOB", "Pacific Intervals"])
     .with_row_index("_idx")
     .with_columns((pl.col("_idx") - pl.col("_idx").min().over("LOB")).alias("_rank"))
     .filter(pl.col("_rank") < 10)
@@ -641,7 +621,6 @@ def send_ou_webhook(df, title, cases=0, summary=''):
     except Exception as e:
         print(f"❌ {e}")
 
-# send_banner()
 win_label = f"{cur_vnt.strftime('%d-%b %H:%M')} → {(cur_vnt + timedelta(minutes=30*7)).strftime('%H:%M')} (VNT)"
 send_ou_webhook(df_t1, "OU — VN Staffing Overview",    cases=len(df_t1), summary=win_label)
 send_ou_webhook(df_t2, "OU — Surplus / Deficit Heads", cases=len(df_t2), summary=win_label)

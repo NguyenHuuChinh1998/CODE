@@ -7,7 +7,16 @@ from zoneinfo import ZoneInfo
 import openpyxl
 import warnings
 
-TEAMS_WEBHOOK_URL = "https://default599e51d62f8c43478e591f795a51a9.8c.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/d9dfae822f4941d0be070dd295d55658/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=zQ76qlawVl-CtgQ1Okym9_Vz4rdbSAa0Mc7VHESH3N4"
+# [REAL — bỏ comment khi test OK, xóa block DRAFT bên dưới]
+# TEAMS_WEBHOOK_URL = "https://default599e51d62f8c43478e591f795a51a9.8c.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/d9dfae822f4941d0be070dd295d55658/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=zQ76qlawVl-CtgQ1Okym9_Vz4rdbSAa0Mc7VHESH3N4"
+
+# [DRAFT — đang active để test, xóa block này khi test OK]
+TEAMS_WEBHOOK_URL = (
+    "https://default599e51d62f8c43478e591f795a51a9.8c.environment.api.powerplatform.com:443"
+    "/powerautomate/automations/direct/workflows/30e46f2733bc4e48a92dc32f90ba9329"
+    "/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun"
+    "&sv=1.0&sig=xkD_H8_VvQh_XzhybXDxV3_gWFyC0E4-3Bpe_MJDJ44"
+)
 
 FORECAST_DIR          = r"C:\Users\huuchinh.nguyen\Concentrix Corporation\WFM-Expedia-HCM - Branding files\Rawdata\CAPTURE\forecast_realtime"
 INTERVAL_DIR          = r"C:\Users\huuchinh.nguyen\Concentrix Corporation\WFM-Expedia-HCM - Branding files\Rawdata\CAPTURE\current_interval"
@@ -198,7 +207,7 @@ def build_html_table(df_pd, title, subtitle="", cases=0, summary="", icon="&#127
         except:
             return "#ffffff", "#1a1a1a"
 
-    n_sites  = len(SITES)
+    # n_sites computed dynamically per interval (PST+VNT as group key)
     IV_COLS  = ["PST", "VNT", "Forecast (all)", "Productive (all)"]
     divider  = (
         f'<tr><td colspan="{len(cols)}" '
@@ -209,6 +218,15 @@ def build_html_table(df_pd, title, subtitle="", cases=0, summary="", icon="&#127
     i = row_idx = 0
 
     while i < len(df_pd):
+        # Detect group size: rows with same PST+VNT belong to same interval
+        cur_key = (str(df_pd.iloc[i].get("PST", "")), str(df_pd.iloc[i].get("VNT", "")))
+        n_sites = 1
+        while i + n_sites < len(df_pd):
+            nxt = df_pd.iloc[i + n_sites]
+            if (str(nxt.get("PST", "")), str(nxt.get("VNT", ""))) == cur_key:
+                n_sites += 1
+            else:
+                break
         chunk = df_pd.iloc[i:i + n_sites]
         rbg   = "#f0f4ff" if row_idx % 2 == 0 else "#ffffff"
 
@@ -244,16 +262,24 @@ def build_html_table(df_pd, title, subtitle="", cases=0, summary="", icon="&#127
 
             hc   = row.get("Heads Contribute")
             req  = row.get("Req Heads")
-            hc_v = f"{float(hc):.2f}" if pd.notna(hc) else "—"
-            if pd.notna(hc) and pd.notna(req) and hc_v != "—":
+            # HC có thể là string (e.g. "18.8%") hoặc float → handle cả hai
+            if isinstance(hc, str) and hc:
+                hc_v = hc          # đã format sẵn, hiển thị plain
+            elif pd.notna(hc):
+                hc_v = f"{float(hc):.2f}"
+            else:
+                hc_v = "—"
+            # Chỉ tô màu nếu HC là số và có cột Req Heads
+            if not isinstance(hc, str) and pd.notna(hc) and pd.notna(req) and hc_v != "—":
                 hcb, hcf = _hc_bg(hc, req)
                 cells.append(_td(hc_v, bg=hcb, fg=hcf, bold=True))
             else:
                 cells.append(_td(hc_v, bg=rbg))
 
-            req_v = str(int(float(req))) if pd.notna(req) else "—"
-            cells.append(_td(req_v, bg=loc_s.get("bg", "#ffffff"),
-                             fg=loc_s.get("fg", "#1a1a1a"), bold=True))
+            if "Req Heads" in cols:
+                req_v = str(int(float(req))) if pd.notna(req) else "—"
+                cells.append(_td(req_v, bg=loc_s.get("bg", "#ffffff"),
+                                 fg=loc_s.get("fg", "#1a1a1a"), bold=True))
 
             rows_html += f"<tr>{''.join(cells)}</tr>"
 
@@ -276,39 +302,22 @@ def build_html_table(df_pd, title, subtitle="", cases=0, summary="", icon="&#127
     )
 
 
-def _send_banner(title, accent_color, icon, subtitle):
-    ts   = datetime.now().strftime("%d-%b-%Y  %I:%M %p (VNT)")
-    html = (
-        f'<table cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" '
-        f'style="border-collapse:collapse;width:100%;background-color:#ffffff;'
-        f'border-left:5px solid {accent_color};">'
-        f'<tr>'
-        f'<td width="5" bgcolor="{accent_color}" style="width:5px;background-color:{accent_color};">&nbsp;</td>'
-        f'<td bgcolor="#ffffff" style="padding:8px 14px;background-color:#ffffff;">'
-        f'<span style="font-size:18px;">{icon}</span>&nbsp;'
-        f'<b style="color:{accent_color};font-size:16px;">{title}</b><br>'
-        f'<span style="font-size:11px;color:#aaaaaa;">&#9201; <b style="color:#cccccc;">{ts}</b>'
-        f'&nbsp;&nbsp;|&nbsp;&nbsp;{subtitle}</span></td></tr></table>'
-    )
-    try:
-        r = requests.post(TEAMS_WEBHOOK_URL, headers={"Content-Type": "application/json"},
-                          data=json.dumps({"html": html}), timeout=30)
-        print(f"[BANNER] {'Sent' if r.status_code in (200, 202) else f'Failed [{r.status_code}]'}")
-    except Exception as e:
-        print(f"[BANNER] Error: {e}")
-
-
-def send_html_via_webhook(df_pd, title, subtitle="", cases=0, summary="", chunk_size=20, icon="&#127919;"):
-    if df_pd is None or df_pd.empty:
+def send_html_via_webhook(df_pd, title, subtitle="", cases=0, summary="", chunk_size=20, icon="&#127919;", force=False):
+    if not force and (df_pd is None or df_pd.empty):
         print(f"[SKIP] '{title}' — empty dataframe")
         return
     n_chunk = max(1, (len(df_pd) + chunk_size - 1) // chunk_size)
 
+    MAX_KB = 26  # Teams webhook limit ~28KB; safe margin
+
     def _post(payload_str, label):
         try:
+            kb = len(payload_str.encode()) / 1024
+            if kb > MAX_KB:
+                print(f"[WARN] '{label}' payload {kb:.1f}KB > {MAX_KB}KB limit — skipping chunk")
+                return
             r  = requests.post(TEAMS_WEBHOOK_URL, headers={"Content-Type": "application/json"},
                                data=payload_str, timeout=30)
-            kb = len(payload_str.encode()) / 1024
             print(f"[OK] '{label}' ({kb:.1f}KB)" if r.status_code in (200, 202)
                   else f"[FAIL] '{label}' [{r.status_code}]: {r.text[:150]}")
         except Exception as e:
@@ -449,118 +458,193 @@ df_long = (
 )
 print(f"  [CI] Long table ready: {df_long.shape} | {len(df_long)//len(SITES)} intervals")
 
-# ── Load IC Summary & filter failed intervals ──────────────────────────────────
+# ── Load IC Summary ──────────────────────────────────────────────────────────
+# Failure criterion: Interval Compliance == 0 (từ WFM system)
+# Forecast(all): từ current_interval (capture_date VNT + interval time)
+# Per-site PH: từ forecast_interval_summary (child rows)
 print("Loading IC Summary...")
 ic_raw = load_all_ic_csv(FORECAST_INTERVAL_DIR)
 df_ic  = pl.DataFrame()
 
-if not ic_raw.is_empty():
-    want = ["Interval Time", "Child Forecast Group", "Forecasted Hours", "Productive Hours"]
-    if "Productive Agents" in ic_raw.columns:
-        want.append("Productive Agents")
+if ic_raw.is_empty():
+    print("  [IC] ic_raw empty")
+else:
+    print(f"  [IC] ic_raw: {ic_raw.shape} | columns: {ic_raw.columns}")
 
-    ic_base = (
-        ic_raw.select([c for c in want if c in ic_raw.columns])
-        .filter(pl.col("Child Forecast Group").cast(pl.Utf8).str.contains(INTERVAL_LG_KEY))
-        .with_columns([
-            pl.col("Child Forecast Group").replace(CHILD_LOB_MAP, default=None).alias("LOB"),
-            pl.col("Forecasted Hours").cast(pl.Float64, strict=False),
-            pl.col("Productive Hours").cast(pl.Float64, strict=False),
-        ])
-        .filter(pl.col("LOB").is_not_null())
-        .with_columns([
-            pl.col("LOB").str.replace("LG Chat ", "").alias("Site"),
-            pl.col("Interval Time").cast(pl.Utf8)
-              .map_elements(_parse_ic_time, return_dtype=pl.Datetime)
-              .alias("VNT_DT"),
-        ])
-        .filter(pl.col("VNT_DT").is_not_null())
-        .with_columns(
-            pl.col("VNT_DT")
-              .dt.replace_time_zone("Asia/Ho_Chi_Minh")
-              .dt.convert_time_zone("America/Los_Angeles")
-              .dt.replace_time_zone(None)
-              .alias("PST_DT")
-        )
-        .filter(pl.col("PST_DT").dt.date().is_in([now_pst.date(), (now_pst - timedelta(days=1)).date()]))
-        .filter(pl.col("VNT_DT") < now_vnt)
+    fg_col = (
+        "Child Forecast Group" if "Child Forecast Group" in ic_raw.columns else
+        "Forecast Group"       if "Forecast Group"       in ic_raw.columns else None
     )
+    ic_col = next((c for c in ic_raw.columns if "Interval Compliance" in c), None)
+    print(f"  [IC] fg={fg_col!r} | ic_col={ic_col!r}")
 
-    if not ic_base.is_empty():
-        totals = (
-            ic_base.group_by("VNT_DT")
-            .agg([
-                pl.col("PST_DT").first().alias("PST_DT"),
-                pl.col("Forecasted Hours").sum().alias("Forecast (all)"),
-                pl.col("Productive Hours").sum().alias("Productive (all)"),
+    if fg_col is None:
+        print("  [IC] ❌ No forecast group column — skip")
+    else:
+        # ── Step 1: Load ALL rows LG Chat từ forecast_interval_summary ─────
+        # IC column mặc định = 0 cho toàn bộ bảng → không dùng để filter
+        # Failed criterion: sum(PH all sites) / Forecast(all) < IC_FAIL_THRESHOLD (95%)
+        ic_failed = (
+            ic_raw
+            .filter(pl.col(fg_col).cast(pl.Utf8).str.contains(INTERVAL_LG_KEY))
+            .with_columns([
+                pl.col("Productive Hours").cast(pl.Float64, strict=False),
+                pl.col("Interval Time").cast(pl.Utf8)
+                  .map_elements(_parse_ic_time, return_dtype=pl.Datetime)
+                  .alias("VNT_DT"),
+                pl.col(fg_col).replace(CHILD_LOB_MAP, default=None).alias("LOB"),
             ])
-            .sort("VNT_DT")
-        )
-        failed_vnt = totals.filter(
-            (pl.col("Forecast (all)") > 0) &
-            (pl.col("Productive (all)") < pl.col("Forecast (all)") * IC_FAIL_THRESHOLD)
-        )
-        print(f"  [IC] {len(failed_vnt)} failed / {len(totals)} total intervals")
-
-        if not failed_vnt.is_empty():
-            site_data = (
-                ic_base.join(failed_vnt.select("VNT_DT"), on="VNT_DT", how="inner")
-                .with_columns([
-                    (pl.col("Productive Hours") * 2).round(2).alias("Heads Contribute"),
-                    pl.col("PST_DT").dt.strftime("%H:%M").alias("PST_time"),
-                ])
+            .filter(pl.col("VNT_DT").is_not_null())
+            .with_columns(
+                pl.col("VNT_DT")
+                  .dt.replace_time_zone("Asia/Ho_Chi_Minh")
+                  .dt.convert_time_zone("America/Los_Angeles")
+                  .dt.replace_time_zone(None)
+                  .alias("PST_DT")
             )
-            if not ucp_df.is_empty():
-                req_cols = [c for c in ucp_df.columns if c.startswith("Req_")]
-                if req_cols:
-                    site_data = site_data.join(
-                        ucp_df.select(["PST_time"] + req_cols), on="PST_time", how="left"
-                    )
+            .filter(pl.col("PST_DT").dt.date()
+                      .is_in([now_pst.date(), (now_pst - timedelta(days=1)).date()]))
+            .filter(pl.col("VNT_DT") < now_vnt)
+        )
+        print(f"  [IC] ic_failed (IC=0): {len(ic_failed)} rows")
 
-            has_pa  = "Productive Agents" in site_data.columns
+        if ic_failed.is_empty():
+            print("  [IC] No IC=0 rows in date range — all intervals passed")
+        else:
+            # ── Step 2: Forecast(all) từ current_interval ─────────────────────
+            # Dùng capture_date (VNT mtime) + interval_time → tránh cross-day pollution
+            _fc: dict = {}
+            for fn in sorted(pathlib.Path(INTERVAL_DIR).glob("Current Interval*")):
+                if fn.suffix.lower() not in (".csv", ".xlsx"): continue
+                try:
+                    cap_date = _mtime_dt(fn).date()
+                    _df = (pl.read_excel(fn) if fn.suffix.lower() == ".xlsx"
+                           else pl.read_csv(fn, infer_schema_length=10000))
+                    if _df.is_empty(): continue
+                    _fg2 = next((c for c in _df.columns if "Forecast Group" in c), None)
+                    if not _fg2: continue
+                    for row in _df.filter(
+                        pl.col(_fg2).cast(pl.Utf8).str.strip_chars() == INTERVAL_LG_KEY
+                    ).iter_rows(named=True):
+                        it = str(row.get("Interval Time", "")).strip()
+                        fh = row.get("Forecasted Hours")
+                        if not it or fh is None: continue
+                        try:
+                            parts  = it.split(":")
+                            h, m   = int(parts[0]) % 24, (int(parts[1]) if len(parts) > 1 else 0)
+                            vnt_dt = datetime.combine(cap_date, datetime.min.time()) + timedelta(hours=h, minutes=m)
+                            if vnt_dt not in _fc:
+                                _fc[vnt_dt] = float(fh)
+                        except: pass
+                except Exception as e:
+                    print(f"  [WARN ci] {fn.name}: {e}")
+
+            fc_df = (
+                pl.DataFrame({
+                    "VNT_DT": list(_fc.keys()),
+                    "Forecast (all)": list(_fc.values()),
+                }, schema={"VNT_DT": pl.Datetime("us"), "Forecast (all)": pl.Float64})
+                if _fc else
+                pl.DataFrame(schema={"VNT_DT": pl.Datetime("us"), "Forecast (all)": pl.Float64})
+            )
+            print(f"  [IC] FH lookup: {len(fc_df)} intervals from current_interval")
+
+            # ── Step 3: Aggregate per VNT_DT ─────────────────────────────────
+            totals = (
+                ic_failed.group_by("VNT_DT")
+                .agg([
+                    pl.col("PST_DT").first().alias("PST_DT"),
+                    pl.col("Productive Hours").sum().alias("Productive (all)"),
+                ])
+                .sort("VNT_DT")
+            )
+            totals = (
+                totals.join(fc_df, on="VNT_DT", how="left")
+                if not fc_df.is_empty() else
+                totals.with_columns(pl.lit(None).cast(pl.Float64).alias("Forecast (all)"))
+            )
+
+            # Failed: sum(PH) < Forecast * 95%
+            totals = totals.filter(
+                pl.col("Forecast (all)").is_not_null() &
+                (pl.col("Forecast (all)") > 0) &
+                (pl.col("Productive (all)") < pl.col("Forecast (all)") * IC_FAIL_THRESHOLD)
+            )
+            failed_vnt_list = sorted(totals["VNT_DT"].to_list())
+            print(f"  [IC] {len(failed_vnt_list)} failed intervals (<{IC_FAIL_THRESHOLD*100:.0f}% attainment)")
+
+            # ── Step 4: Per-site rows — chỉ site có PH data ──────────────────
+            has_site   = not ic_failed.filter(pl.col("LOB").is_not_null()).is_empty()
+            ic_by_site = (
+                ic_failed
+                .filter(pl.col("LOB").is_not_null())
+                .filter(pl.col("Productive Hours").is_not_null())
+                .with_columns(pl.col("LOB").str.replace("LG Chat ", "").alias("Site"))
+            ) if has_site else pl.DataFrame()
+
             ic_rows = []
-            for vnt_val in sorted(failed_vnt["VNT_DT"].to_list()):
-                tr = failed_vnt.filter(pl.col("VNT_DT") == vnt_val).row(0, named=True)
-                for site in SITES:
-                    sr = site_data.filter((pl.col("VNT_DT") == vnt_val) & (pl.col("Site") == site))
-                    r  = sr.row(0, named=True) if not sr.is_empty() else {}
+            for vnt_val in failed_vnt_list:
+                tr           = totals.filter(pl.col("VNT_DT") == vnt_val).row(0, named=True)
+                pst_dt_val   = tr["PST_DT"]
+                fc_all       = tr.get("Forecast (all)")
+                prod_all     = tr["Productive (all)"]
+                pst_time_str = pst_dt_val.strftime("%H:%M") if pst_dt_val else None
+
+                if has_site and not ic_by_site.is_empty():
+                    for r in ic_by_site.filter(pl.col("VNT_DT") == vnt_val).iter_rows(named=True):
+                        site = r["Site"]
+                        ph   = r.get("Productive Hours")
+                        if ph is None: continue
+                        pa  = round(float(ph) * 2, 2)
+                        hc  = f"{float(ph)/float(fc_all)*100:.1f}%" if fc_all and float(fc_all) > 0 else None
+                        req_h = None
+                        if not ucp_df.is_empty() and pst_time_str:
+                            rr = ucp_df.filter(pl.col("PST_time") == pst_time_str)
+                            if not rr.is_empty() and f"Req_{site}" in rr.columns:
+                                req_h = rr[f"Req_{site}"][0]
+                        ic_rows.append({
+                            "PST_DT": pst_dt_val, "VNT_DT": vnt_val,
+                            "Forecast (all)": fc_all, "Productive (all)": prod_all,
+                            "Site": site, "Productive Agents": pa,
+                            "Productive Hours": ph, "Heads Contribute": hc,
+                        })
+                else:
+                    ph  = prod_all
+                    pa  = round(float(ph) * 2, 2) if ph else None
+                    hc  = f"{float(ph)/float(fc_all)*100:.1f}%" if ph and fc_all and float(fc_all) > 0 else None
                     ic_rows.append({
-                        "PST_DT":            tr["PST_DT"],
-                        "VNT_DT":            vnt_val,
-                        "Forecast (all)":    tr["Forecast (all)"],
-                        "Productive (all)":  tr["Productive (all)"],
-                        "Site":              site,
-                        "Productive Agents": r.get("Productive Agents") if has_pa else None,
-                        "Productive Hours":  r.get("Productive Hours"),
-                        "Heads Contribute":  r.get("Heads Contribute"),
-                        "Req Heads":         r.get(f"Req_{site}") if r else None,
+                        "PST_DT": pst_dt_val, "VNT_DT": vnt_val,
+                        "Forecast (all)": fc_all, "Productive (all)": prod_all,
+                        "Site": "All", "Productive Agents": pa,
+                        "Productive Hours": ph, "Heads Contribute": hc,
                     })
 
-            df_ic = (
-                pl.DataFrame(ic_rows).sort("VNT_DT")
-                .with_columns([
-                    pl.col("VNT_DT").dt.strftime("%d-%b %H:%M").alias("VNT"),
-                    pl.col("PST_DT").dt.strftime("%d-%b %H:%M").alias("PST"),
-                ])
-                .drop(["VNT_DT", "PST_DT"])
-                .select(["PST", "VNT", "Forecast (all)", "Productive (all)",
-                         "Site", "Productive Agents", "Productive Hours",
-                         "Heads Contribute", "Req Heads"])
-            )
-            print(f"  [IC] Long table ready: {df_ic.shape}")
-        else:
-            print(f"  [IC] All intervals passed >= {IC_FAIL_THRESHOLD*100:.0f}% attainment")
+            print(f"  [IC] ic_rows: {len(ic_rows)}")
+            if ic_rows:
+                df_ic = (
+                    pl.DataFrame(ic_rows, infer_schema_length=None,
+                                 schema_overrides={
+                                     "VNT_DT": pl.Datetime, "PST_DT": pl.Datetime,
+                                     "Forecast (all)": pl.Float64, "Productive (all)": pl.Float64,
+                                     "Productive Agents": pl.Float64, "Productive Hours": pl.Float64,
+                                     "Heads Contribute": pl.Utf8,
+                                 })
+                    .sort("VNT_DT")
+                    .with_columns([
+                        pl.col("VNT_DT").dt.strftime("%d-%b %H:%M").alias("VNT"),
+                        pl.col("PST_DT").dt.strftime("%d-%b %H:%M").alias("PST"),
+                    ])
+                    .drop(["VNT_DT", "PST_DT"])
+                    .select(["PST", "VNT", "Forecast (all)", "Productive (all)",
+                             "Site", "Productive Agents", "Productive Hours",
+                             "Heads Contribute"])
+                )
+                print(f"  [IC] df_ic ready: {df_ic.shape}")
 
 print("\nAll tables built successfully")
 
 # %%
 # ── Current Interval ───────────────────────────────────────────────────────────
-_send_banner(
-    title        = "Heads Contribution Overview",
-    accent_color = "#006064",
-    icon         = "🎯",
-    subtitle     = "Productive Agents vs Heads Contribute vs Req Heads — LG Chat by Site",
-)
 
 df_ci_pd = df_long.to_pandas()
 n_ci     = len(df_ci_pd) // len(SITES)
@@ -575,39 +659,58 @@ send_html_via_webhook(
     subtitle   = f"In-progress intervals — {now_vnt.strftime('%d-%b %H:%M')} VNT",
     cases      = n_ci,
     summary    = summary_ci,
-    chunk_size = len(SITES) * 10,
+    chunk_size = len(SITES) * 2,   # ~8 rows/chunk → safe for Teams
     icon       = "🔴"
 )
 
 # ── IC Summary: Failed Intervals ───────────────────────────────────────────────
+pst_today = now_pst.date()
+# ── DEBUG: xác nhận trạng thái df_ic ────────────────────────────────────────
+print(f"[DEBUG Cell3] df_ic type      : {type(df_ic)}")
+print(f"[DEBUG Cell3] df_ic.is_empty(): {df_ic.is_empty() if hasattr(df_ic, 'is_empty') else 'N/A'}")
+print(f"[DEBUG Cell3] df_ic.shape     : {df_ic.shape if hasattr(df_ic, 'shape') else 'N/A'}")
+if hasattr(df_ic, 'is_empty') and not df_ic.is_empty():
+    print(df_ic.head(6))
+# ─────────────────────────────────────────────────────────────────────────────
 if df_ic is not None and not df_ic.is_empty():
-    pst_today = now_pst.date()
-    df_ic_pd  = df_ic.to_pandas()
-    n_ic      = len(df_ic_pd) // len(SITES)
-
-    _send_banner(
-        title        = "IC Summary — Failed Intervals",
-        accent_color = "#E65100",
-        icon         = "⚠️",
-        subtitle     = (
-            f"Intervals below {IC_FAIL_THRESHOLD*100:.0f}% attainment · "
-            f"PST {pst_today - timedelta(days=1)} → {pst_today}"
-        ),
-    )
-    send_html_via_webhook(
-        df_ic_pd,
-        title      = "LG Chat — IC Summary | Failed Intervals",
-        subtitle   = (
-            f"Past completed intervals < {IC_FAIL_THRESHOLD*100:.0f}% attainment · "
-            f"PST {pst_today - timedelta(days=1)} → {pst_today}"
-        ),
-        cases      = n_ic,
-        summary    = f"⚠️ {n_ic} failed interval(s) detected across {len(SITES)} sites",
-        chunk_size = len(SITES) * 10,
-    )
-    print(f"[IC] Done | {n_ic} failed intervals sent")
+    df_ic_pd = df_ic.to_pandas()
+    # Đếm unique intervals (PST+VNT) thay vì chia cho SITES
+    n_ic     = df_ic.select(["PST", "VNT"]).unique().height
+    ic_title   = f"LG Chat — IC Summary | ⚠️ {n_ic} Failed Interval(s) | PST {(now_pst - timedelta(days=1)).strftime('%d-%b')} – {now_pst.strftime('%d-%b')}"
+    ic_summary = f"⚠️ {n_ic} failed interval(s) detected across {len(SITES)} sites"
 else:
-    print(f"[IC] All intervals passed — nothing to send")
+    # Không có failed interval → gửi bảng trống kèm note
+    df_ic_pd = pd.DataFrame(columns=["PST", "VNT", "Forecast (all)", "Productive (all)",
+                                      "Site", "Productive Agents", "Productive Hours",
+                                      "Heads Contribute", "Req Heads"])
+    n_ic     = 0
+    ic_title   = "LG Chat — IC Summary | ✅ All Intervals Passed"
+    ic_summary = f"All completed intervals >= {IC_FAIL_THRESHOLD*100:.0f}% attainment — no failed intervals"
+
+# ── DEBUG: trạng thái df_ic trước khi gửi ───────────────────────────────────
+print(f"[DEBUG] df_ic type      : {type(df_ic)}")
+print(f"[DEBUG] df_ic is None   : {df_ic is None}")
+if df_ic is not None:
+    print(f"[DEBUG] df_ic.is_empty(): {df_ic.is_empty()}")
+    print(f"[DEBUG] df_ic.shape     : {df_ic.shape}")
+print(f"[DEBUG] df_ic_pd.empty  : {df_ic_pd.empty}")
+print(f"[DEBUG] df_ic_pd.shape  : {df_ic_pd.shape}")
+print(f"[DEBUG] n_ic            : {n_ic}")
+print(f"[DEBUG] ic_title        : {ic_title}")
+# ─────────────────────────────────────────────────────────────────────────────
+send_html_via_webhook(
+    df_ic_pd,
+    title      = ic_title,
+    subtitle   = (
+        f"Past completed intervals · "
+        f"PST {pst_today - timedelta(days=1)} → {pst_today}"
+    ),
+    cases      = n_ic,
+    summary    = ic_summary,
+    chunk_size = len(SITES) * 2,   # ~8 rows/chunk → safe for Teams
+    force      = True,
+)
+print(f"[IC] Done | {n_ic} failed intervals")
 
 print(f"\nDone | CI={len(df_long)//len(SITES)} intervals | IC={len(df_ic)//len(SITES) if not df_ic.is_empty() else 0} failed")
 
